@@ -2,6 +2,7 @@
 from __future__ import annotations
 from collections import Counter
 from filtering import exportable_rows
+from report_fields import account_status, connected_via, elapsed_metrics, fmt_duration, account_links
 from datetime import datetime, timezone
 from io import BytesIO
 import matplotlib
@@ -148,7 +149,10 @@ def make_word(rows,events,job):
     _table(d,['المؤشر','القيمة'],[
         ('الحسابات الفريدة',f"{summ['total']:,}"),('الأسماء المتاحة',f"{summ['named']:,}"),('اليوزرات المتاحة',f"{summ['handles']:,}"),
         ('الدول المحددة',str(len(summ['known']))),('الحسابات المحمية المؤكدة',f"{summ['protected']:,}"),
-        ('الصفحات المسحوبة',str(summ['pages'])),('زمن المعالجة المسجل',f"{summ['seconds']:.1f} ثانية")])
+        ('الصفحات المسحوبة',str(summ['pages'])),('زمن طلبات سحب المتابعين',fmt_duration(summ['seconds']))])
+    tm=elapsed_metrics(job,events)
+    _para(d,'الزمن منذ إنشاء المهمة حتى آخر تحديث: '+fmt_duration(tm['wall_seconds']))
+    _para(d,'مدة إثراء About منفصلة: غير مسجلة بدقة في بيانات هذه النسخة.',9,color=GREY)
     _section(d,'التوزيع الجغرافي حسب «حول الحساب»')
     if summ['known']:
         _table(d,['الدولة','عدد الحسابات','النسبة من الإجمالي'],[(k,str(v),f'{v/max(1,summ["total"])*100:.1f}%') for k,v in sorted(summ['known'].items(),key=lambda x:-x[1])[:25]])
@@ -163,6 +167,9 @@ def make_word(rows,events,job):
         sample.append((_s(r.get('name')) or 'غير متاح',('@'+u) if u else 'غير متاح',uid,_s(r.get('account_country')) or 'غير متاح'))
     if sample:_table(d,['الاسم','اليوزر','المعرف الدائم','دولة الحساب'],sample)
     else:_para(d,'لا توجد حسابات محفوظة.',10)
+    _section(d,'حالة الحسابات (وفق بيانات المصدر)')
+    statuses=Counter(account_status(r) for r in rows)
+    _table(d,['الحالة','عدد الحسابات'],[(k,str(v)) for k,v in statuses.items()])
     _section(d,'الخط الزمني — آخر 12 حدثًا')
     if events:_table(d,['التوقيت UTC','الحدث','الفريد','التفاصيل'],[(_s(e.get('at')),_s(e.get('kind')),_s(e.get('unique_count')),_s(e.get('details'))[:110]) for e in events[-12:]])
     else:_para(d,'لا توجد أحداث مسجلة.',10)
@@ -214,8 +221,12 @@ def make_powerpoint(rows,events,job):
         if num:
             fg=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(11.7-10.4*num/max(1,s['total'])), Inches(y+.60), Inches(10.4*num/max(1,s['total'])), Inches(.32));fg.fill.solid();fg.fill.fore_color.rgb=PPTColor(*TEAL);fg.line.fill.background()
         _ppt_text(slide,1.3,y,2,.4,f'{num:,} / {s["total"]:,}',15)
-    slide=_base_slide(p,'مؤشرات الحماية والحالات',5)
-    _ppt_text(slide,1,1.5,11.3,1.1,f"حسابات محمية مؤكدة: {s['protected']:,}",27,True,TEAL,fill=LIGHT)
+    slide=_base_slide(p,'حالة الحسابات',5)
+    stat=Counter(account_status(r) for r in rows)
+    for i,(label,count) in enumerate(stat.items()):
+        _ppt_text(slide,1.2,1.45+i*1.05,10.5,.8,f'{label}: {count:,}',23,True,TEAL,fill=LIGHT)
+    tm=elapsed_metrics(job,events)
+    _ppt_text(slide,1.2,6.35,10.5,.45,'مدة طلبات السحب: '+fmt_duration(tm['api_seconds'])+' | مدة المهمة: '+fmt_duration(tm['wall_seconds']),14)
     slide=_base_slide(p,'عينة من الحسابات',6)
     for i,r in enumerate(rows[:8]):
         yy=1.35+i*.61;uid=_s(r.get('uid'));username=_s(r.get('username'));name=_s(r.get('name')) or 'غير متاح'
