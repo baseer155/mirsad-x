@@ -6,7 +6,7 @@ Never embed API keys in source code.
 import time
 from urllib.parse import urlsplit
 import requests
-from core import save_page, add_event, utcnow
+from core import save_page, add_event, utcnow, safe_public_text, safe_username, safe_name, repair_legacy_rows
 
 HOST = 'twitter241.p.rapidapi.com'
 
@@ -49,27 +49,55 @@ def call(path, key, params):
         raise RapidAPIError('صيغة استجابة غير متوقعة.')
     return payload
 
+def _candidate(value,kind):
+    if kind=='name':return safe_name(value)
+    if kind=='username':return safe_username(value)
+    return safe_public_text(value)
+
+def _profile_objects(raw):
+    """Follow only X user profile wrappers, not arbitrary unrelated numbers/objects."""
+    if not isinstance(raw,dict):return []
+    queue=[raw]; visited=set(); found=[]
+    while queue and len(visited)<30:
+        obj=queue.pop(0)
+        if not isinstance(obj,dict) or id(obj) in visited:continue
+        visited.add(id(obj));found.append(obj)
+        for key in ('result','user_results','user_result','user','data','core','legacy'):
+            nested=obj.get(key)
+            if isinstance(nested,dict):queue.append(nested)
+    return found
+
 def parse_user(raw):
-    """Map multiple observed provider envelopes without inventing missing profile fields."""
-    if not isinstance(raw,dict):return None
-    if isinstance(raw.get('user_results'),dict):raw=raw['user_results'].get('result') or raw
-    if isinstance(raw.get('result'),dict) and not raw.get('rest_id'):
-        raw=raw['result']
-    legacy=raw.get('legacy') or {}
-    if not isinstance(legacy,dict):legacy={}
-    uid=raw.get('rest_id') or raw.get('id_str') or raw.get('user_id') or raw.get('uid')
-    # GraphQL id is base64 opaque; never use it as a numeric user ID.
-    if not uid and str(raw.get('id','')).isdigit():uid=raw['id']
-    if not uid or not str(uid).isdigit():return None
-    metrics=raw.get('public_metrics') or {}
-    return {'id':str(uid),
-            'username':legacy.get('screen_name') or legacy.get('username') or raw.get('screen_name') or raw.get('username') or '',
-            'name':legacy.get('name') or raw.get('name') or '',
-            'location':legacy.get('location') or raw.get('location') or '',
-            'protected':legacy.get('protected') if legacy.get('protected') is not None else raw.get('protected'),
-            'verified':raw.get('is_blue_verified') if raw.get('is_blue_verified') is not None else (legacy.get('verified') if legacy.get('verified') is not None else raw.get('verified')),
-            'followers_count':legacy.get('followers_count') if legacy.get('followers_count') is not None else (raw.get('followers_count') if raw.get('followers_count') is not None else metrics.get('followers_count')),
-            'following_count':legacy.get('friends_count') if legacy.get('friends_count') is not None else (raw.get('friends_count') if raw.get('friends_count') is not None else metrics.get('following_count'))}
+    """Parse X user objects while rejecting metadata masquerading as names."""
+    objs=_profile_objects(raw)
+    if not objs:return None
+    uid=''
+    for o in objs:
+        val=o.get('rest_id') or o.get('id_str') or o.get('user_id') or o.get('uid')
+        if not val and str(o.get('id','')).isdigit():val=o['id']
+        if val is not None and str(val).isdigit():uid=str(val);break
+    if not uid:return None
+    legacy=next((o for o in objs if 'screen_name' in o or ('name' in o and 'followers_count' in o)),{})
+    name=username=location=''
+    for obj in ([legacy]+objs):
+        if not name:name=_candidate(obj.get('name') or obj.get('display_name'),'name')
+        if not username:username=_candidate(obj.get('screen_name') or obj.get('username'),'username')
+        if not location:location=_candidate(obj.get('location'),'location')
+    def get_value(*keys):
+        for obj in ([legacy]+objs):
+            for k in keys:
+                val=obj.get(k)
+                if val is not None and not isinstance(val,(dict,list)):
+                    return val
+        return None
+    metrics=next((o.get('public_metrics') for o in objs if isinstance(o.get('public_metrics'),dict)),{})
+    followers=get_value('followers_count')
+    following=get_value('friends_count','following_count')
+    return {'id':uid,'username':username,'name':name,'location':location,
+            'protected':get_value('protected'),
+            'verified':get_value('is_blue_verified','verified'),
+            'followers_count':followers if followers is not None else metrics.get('followers_count'),
+            'following_count':following if following is not None else metrics.get('following_count')}
 
 def extract_users(payload):
     """Extract profile objects from followers responses and saved JSON test files."""
@@ -133,3 +161,108 @@ def fetch_batch(db, job_id, key, path, page_limit=3, unique_limit=50000, count=2
         if callback:callback(completed,added,dups)
         if not nxt:break
     return completed
+
+
+# Detailed profile lookup is a separate, potentially billable operation.
+# Twttr API (twitter241) exposes GET /get-users with query parameter 'users'.
+# Never infer that an account is suspended from a missing profile.
+
+def _walk_user_profiles(payload, max_nodes=100000):
+    """Search nested GraphQL and API envelopes for actual profile objects.
+
+    Keep numeric IDs as text. Return only records with an explicit stable numeric ID.
+    If a user appears several times, prefer the most complete representation.
+    """
+    stack=[payload]; seen=0; found={}
+    while stack and seen<max_nodes:
+        obj=stack.pop();seen+=1
+        if isinstance(obj,list):
+            stack.extend(obj)
+            continue
+        if not isinstance(obj,dict):continue
+        user=parse_user(obj)
+        if user:
+            uid=user['id']
+            score=sum(bool(user.get(k)) for k in ('name','username','location'))
+            prior=found.get(uid)
+            if prior is None or score>sum(bool(prior.get(k)) for k in ('name','username','location')):
+                found[uid]=user
+        for k,v in obj.items():
+            if isinstance(v,(dict,list)) and k not in ('entities','description','affiliates_highlighted_label'):
+                stack.append(v)
+    return list(found.values())
+
+def lookup_profiles_by_ids(ids, key, path='/get-users'):
+    """Lookup public profiles by numeric user IDs using the provider's own endpoint.
+
+    Pass no more than a small batch to avoid an undocumented size limit.
+    No guessing or fallback to unrelated providers.
+    """
+    ids=[str(uid) for uid in ids if str(uid).isdigit()]
+    if not ids:return []
+    payload=call(path,key,{'users':','.join(ids)})
+    found=_walk_user_profiles(payload)
+    allowed=set(ids)
+    return [u for u in found if u['id'] in allowed]
+
+def enrich_missing_job(db,job_id,key,path='/get-users',batch_size=20,max_batches=5,callback=None):
+    """Complete missing name, username, or location for previously saved IDs.
+
+    Returns numbers processed, matched, changed. Also logs unsuccessful lookups
+    without inventing empty profile fields or rewriting identifiers.
+    """
+    from core import enrich_existing
+    batch_size=max(1,min(int(batch_size),100))
+    max_batches=max(1,min(int(max_batches),100))
+    repair_legacy_rows(db,job_id)
+    missing=db.execute("SELECT uid FROM followers WHERE job_id=? AND " +
+        "(COALESCE(name,'')='' OR COALESCE(username,'')='') ORDER BY rowid",(job_id,)).fetchall()
+    total_queried=matched=changed=0
+    for k in range(0,min(len(missing),batch_size*max_batches),batch_size):
+        ids=[str(x['uid']) for x in missing[k:k+batch_size]]
+        try:
+            enriched=lookup_profiles_by_ids(ids,key,path)
+        except RapidAPIError as e:
+            add_event(db,job_id,'فشل إثراء',f'توقف استكمال معلومات {len(ids)} حساب: {e}')
+            raise
+        a,b=enrich_existing(db,job_id,enriched)
+        total_queried+=len(ids);matched+=a;changed+=b
+        if callback:callback(total_queried,matched,changed)
+    add_event(db,job_id,'استكمال ملف شخصي',f'تم الاستعلام عن {total_queried} معرف؛ مطابقة {matched}؛ تحديث {changed}')
+    return total_queried,matched,changed
+
+
+def diagnose_lookup(ids, key, path='/get-users'):
+    """One deliberately triggered request; returns structural diagnostics, no secrets/raw PII."""
+    ids=[str(x) for x in ids if str(x).isdigit()][:3]
+    payload=call(path,key,{'users':','.join(ids)})
+    results=_walk_user_profiles(payload)
+    return {'requested':len(ids),'matched':len([x for x in results if x['id'] in ids]),
+            'root_fields':list(payload.keys())[:20],
+            'profile_with_name':sum(bool(x['name']) for x in results),
+            'profile_with_username':sum(bool(x['username']) for x in results)}
+
+def about_information(payload):
+    """Use explicit origin/status indicators only; never infer suspension or connection."""
+    keys_country=('account_based_in','account_country','country_of_account','country_of_origin')
+    keys_connected=('connected_via','connected_through','app_store')
+    keys_status=('suspension_status','account_status','suspended')
+    found={'account_country':None,'connected_via':None,'suspension_status':None}
+    stack=[payload]
+    while stack:
+        obj=stack.pop()
+        if isinstance(obj,list):stack.extend(obj);continue
+        if not isinstance(obj,dict):continue
+        for field,keys in (('account_country',keys_country),('connected_via',keys_connected),('suspension_status',keys_status)):
+            if found[field] is None:
+                for key in keys:
+                    val=obj.get(key)
+                    if key=='suspended' and isinstance(val,bool):val='موقوف' if val else 'غير موقوف حسب المصدر'
+                    if isinstance(val,str) and val.strip():found[field]=val.strip()[:150];break
+        for v in obj.values():
+            if isinstance(v,(dict,list)):stack.append(v)
+    return found
+
+def lookup_about(uid,key,path):
+    # Optional third-party route; user must confirm required query field and semantics.
+    return about_information(call(path,key,{'user':str(uid)}))
