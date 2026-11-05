@@ -12,6 +12,8 @@ import streamlit as st
 from core import (connect,create_job,add_event,followers_as_dicts,events_as_dicts,
                   import_csv,job_rows,username_from_input,utcnow,enrich_existing,repair_legacy_rows)
 from exporter import make_excel
+from report_export import make_word, make_powerpoint
+from filtering import exportable_rows
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
 from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
 from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted
@@ -426,7 +428,18 @@ if page == '📊 التحليلات والتقارير':
             st.dataframe(preview[['name','username','uid','حالة المنشورات','country','location','account_country','connected_via','suspension_status','protected','verified']],hide_index=True,use_container_width=True)
             st.caption('عبارة «هذه المنشورات محميّة» تظهر فقط عندما يؤكد المصدر أن الحساب محمي. تعذر الجلب وحده ليس دليلًا على الحماية.')
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
-            st.download_button('⬇️ تنزيل تقرير Excel المعتمد (5 أوراق)',data=make_excel(rows,events,job),file_name=f'mirsad_{selected}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary')
+            st.markdown('#### 📦 تنزيل التقارير المهنية')
+            eligible_rows = exportable_rows(rows)
+            excluded_count = len(rows) - len(eligible_rows)
+            st.caption(f'سيُدرج في التقرير النهائي {len(eligible_rows):,} حسابًا محدد الدولة، مع استبعاد {excluded_count:,} حسابًا بلا دولة متاحة. تبقى السجلات المستبعدة محفوظة داخل النظام.')
+            st.caption('Excel للبيانات التفصيلية، Word للتقرير الإداري القابل للتحرير، وPowerPoint للعرض التنفيذي. جميع الملفات تعتمد السجلات المحفوظة وقت التصدير.')
+            ex_col, word_col, ppt_col = st.columns(3)
+            with ex_col:
+                st.download_button('⬇️ تقرير Excel',data=make_excel(eligible_rows,events,job),file_name=f'account_report_{selected}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
+            with word_col:
+                st.download_button('⬇️ تقرير Word',data=make_word(eligible_rows,events,job),file_name=f'account_report_{selected}.docx',mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
+            with ppt_col:
+                st.download_button('⬇️ عرض PowerPoint',data=make_powerpoint(eligible_rows,events,job),file_name=f'account_report_{selected}.pptx',mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
