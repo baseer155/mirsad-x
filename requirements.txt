@@ -3,3 +3,4 @@ requests>=2.31,<3
 pandas>=2.2,<3
 xlsxwriter>=3.2,<4
 matplotlib>=3.8,<4
+matplotlib>=3.8,<4
