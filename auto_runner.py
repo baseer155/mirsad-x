@@ -48,6 +48,7 @@ def step(db, job_id, *, rapid_key, followers_path, about_path,
     at_target=snap['unique']>=goal
     no_more_pages=snap['job_status']=='مكتمل'
     if do_fetch and not at_target and not no_more_pages:
+        before_count=snap['unique']
         try:
             fn=follower_fetcher or fetch_batch
             outcome['fetched_pages']=fn(db,job_id,rapid_key,followers_path,
@@ -58,6 +59,8 @@ def step(db, job_id, *, rapid_key, followers_path, about_path,
             outcome['snapshot']=snapshot(db,job_id,goal)
             return outcome
     snap=snapshot(db,job_id,goal)
+    # Expose measurable new follower progress; repeated cursor-only pages must not be mistaken for progress.
+    outcome['new_unique']=snap['unique']-outcome['snapshot']['unique']
     if do_about and policy(db,job_id)['enabled'] and snap['about']['remaining_requests']>0:
         try:
             r=run_batch(db,job_id,rapid_key,about_path,int(about_batch),fetcher=about_fetcher)
