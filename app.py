@@ -13,7 +13,7 @@ from core import (connect,create_job,add_event,followers_as_dicts,events_as_dict
                   import_csv,job_rows,username_from_input,utcnow,enrich_existing,repair_legacy_rows)
 from exporter import make_excel
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
-from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about
+from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown('''<style>
@@ -72,7 +72,7 @@ token=secret('X_BEARER_TOKEN')
 rapid_key=secret('RAPIDAPI_KEY')
 rapid_path=secret('RAPIDAPI_FOLLOWERS_PATH')
 rapid_profiles_path=secret('RAPIDAPI_PROFILES_PATH') or '/get-users'
-rapid_about_path=secret('RAPIDAPI_ABOUT_PATH')
+rapid_about_path=secret('RAPIDAPI_ABOUT_PATH') or '/about-account'
 api_mode='RapidAPI' if rapid_key else 'X الرسمية'
 configured=bool(rapid_key and rapid_path) if rapid_key else bool(token)
 
@@ -222,25 +222,32 @@ with s3:
                             st.rerun()
                         except (ValueError,RapidAPIError) as exc:st.error(str(exc))
             if rapid_key and job['platform']=='X':
-                with st.expander('🌍 اختبار معلومات «حول الحساب» — الدولة / متصل عبر / الإيقاف'):
-                    st.caption('هذه البيانات لا تأتي من مسار المتابعين. يلزم إدخال المسار الحقيقي لخدمة Get About Account في RAPIDAPI_ABOUT_PATH. ابدأ بحساب واحد؛ قد تُحسب رسوم لكل طلب. لا نعدّ غياب الحساب دليل إيقاف.')
-                    if not rapid_about_path:
-                        st.info('أضف RAPIDAPI_ABOUT_PATH إلى Secrets فقط بعد التأكد من مساره ومعلمات الطلب من توثيق مزودك.')
+                with st.expander('🌍 فحص «حول الحساب»: بلد الحساب / متصل عبر / حالة الإيقاف', expanded=True):
+                    st.caption('المسار twitter241: GET /about-account والوسيط username. يتم فحص كل حساب بطلب مستقل قد يكون مدفوعًا. الحالة غير مؤكدة إذا لم يصرح المصدر بها. لا نستنتج بلد الحساب من الموقع المعلن.')
+                    valid=[r for r in rows if r.get('username')]
+                    if not valid:
+                        st.warning('لا توجد يوزرات في هذا التقرير. استكمل الأسماء واليوزرات أولًا عبر Get Users By IDs.')
                     else:
-                        about_id=st.selectbox('اختبار حساب من نتائج التقرير', [str(r['uid']) for r in rows[:20]],key=f'about_id_{selected}')
-                        if st.button('فحص بيانات حول حساب واحد',key=f'about_test_{selected}'):
+                        sample=st.selectbox('اختر حسابًا لاختبار الاستجابة', options=valid[:100],format_func=lambda r:f"@{r['username']} ({r['uid']})",key=f'about_id_{selected}')
+                        if st.button('🔍 اختبار حول حساب واحد (طلب واحد محتمل التكلفة)',key=f'about_test_{selected}'):
                             try:
-                                from rapid_client import validate_path
-                                result=lookup_about(about_id,rapid_key,validate_path(rapid_about_path))
-                                if not any(result.values()):
-                                    st.warning('لم تتضمن الاستجابة حقولًا صريحة للدولة أو طريقة الاتصال أو الإيقاف. لا يمكن تصنيفها.')
+                                detail=lookup_about_diagnostic(sample['username'],rapid_key,rapid_about_path)
+                                st.json(detail)
+                                if not detail['any_about_value']:
+                                    st.warning('المزود لم يعِد حقولًا صريحة للدولة/متصل عبر/الإيقاف. راجع مفاتيح الاستجابة المعروضة، ولا تشغّل فحصًا جماعيًا بعد.')
                                 else:
-                                    db.execute('UPDATE followers SET account_country=?,connected_via=?,suspension_status=?,about_checked_at=? WHERE job_id=? AND uid=?',
-                                        (result['account_country'],result['connected_via'],result['suspension_status'],utcnow(),selected,about_id))
-                                    db.commit()
-                                    st.success('تم حفظ حقول About التي أعادها المزود صراحة.');st.json(result)
-                                    st.rerun()
+                                    st.success('عاد حقل صريح واحد على الأقل. يمكنك تشغيل فحص دفعة محدودة.')
                             except RapidAPIError as e:st.error(str(e))
+                        per_click=st.number_input('أقصى حسابات تفحص في هذه الضغطة (قد تكون طلبات مدفوعة)',min_value=1,max_value=100,value=3,step=1,key=f'about_limit_{selected}')
+                        consent=st.checkbox('أوافق على عدد الطلبات المحتمل وأريد فحص الحسابات التي لم تُفحص سابقًا',key=f'about_consent_{selected}')
+                        if st.button('🌍 استكمال بيانات «حول الحساب»',disabled=not consent,key=f'about_run_{selected}',type='primary'):
+                            try:
+                                with st.spinner('يتم فحص حسابات لم تُفحص سابقًا...'):
+                                    stats=enrich_about_job(db,selected,rapid_key,rapid_about_path,int(per_click))
+                                st.success('نتيجة الفحص: '+str(stats))
+                                st.rerun()
+                            except RapidAPIError as e:st.error(str(e))
+                    st.caption('حالة الإيقاف لا يمكن ضمان اكتشافها لقائمة متابعين موجودة؛ فحص About لا يعادل فحص حالة حساب موقوف. استخدم مصدر حالة مستقلًا إن توفر.')
             st.write('#### الحسابات حسب الدولة المعلنة (تقديري)')
             st.bar_chart(pd.Series(countries).sort_values(ascending=False))
             protected=Counter(r.get('country') or 'غير محددة' for r in rows if r.get('protected')==1)
