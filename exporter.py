@@ -3,8 +3,9 @@ import io
 from collections import Counter,defaultdict
 from datetime import datetime
 import xlsxwriter
+from content_status import posts_status
 
-HEADERS=['الاسم','اليوزر','المعرف الدائم','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','الموقع المعلن','الدولة (من الموقع المعلن)','الحساب محمي','موثق','عدد المتابعين','عدد المتابَعين','وقت المعالجة UTC','الدولة حسب حول الحساب','متصل عبر','حالة الإيقاف']
+HEADERS=['الاسم','اليوزر','المعرف الدائم','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','الموقع المعلن','الدولة (من الموقع المعلن)','الحساب محمي','موثق','عدد المتابعين','عدد المتابَعين','وقت المعالجة UTC','الدولة حسب حول الحساب','متصل عبر','حالة الإيقاف','حالة المنشورات']
 
 def clean_cell(value):
     if value is None:return ''
@@ -28,7 +29,7 @@ def make_excel(rows,events,job):
         for idx,h in enumerate(headers):ws.write_string(0,idx,h,title)
         for idx,width in enumerate(widths or []):ws.set_column(idx,idx,width)
         return ws
-    w=sheet('المتابعون',HEADERS,[25,21,25,49,39,44,27,26,16,12,18,19,25,24,20,19])
+    w=sheet('المتابعون',HEADERS,[25,21,25,49,39,44,27,26,16,12,18,19,25,24,20,19,47])
     distribution=Counter()
     protected=defaultdict(lambda:[0,0])
     for i,r in enumerate(rows,1):
@@ -44,7 +45,7 @@ def make_excel(rows,events,job):
               'نعم' if r.get('protected')==1 else ('لا' if r.get('protected')==0 else 'غير متاح'),
               'نعم' if r.get('verified')==1 else ('لا' if r.get('verified')==0 else 'غير متاح'),
               r.get('followers_count'),r.get('following_count'),r.get('fetched_at'),
-              r.get('account_country') or 'لم يتحقق',r.get('connected_via') or 'لم يتحقق',r.get('suspension_status') or 'لم يتحقق']
+              r.get('account_country') or 'لم يتحقق',r.get('connected_via') or 'لم يتحقق',r.get('suspension_status') or 'لم يتحقق',posts_status(r)]
         for j,v in enumerate(cols):
             if j in (3,4,5) and v:
                 w.write_url(i,j,v,link,'فتح الرابط')
