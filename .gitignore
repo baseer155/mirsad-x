@@ -1,0 +1,8 @@
+.streamlit/secrets.toml
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.env
+__pycache__/
+.pytest_cache/
+*.xlsx
