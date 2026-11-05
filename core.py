@@ -155,3 +155,28 @@ def import_csv(db, job_id, content):
         n,_=save_page(db,job_id,batch,None,0);inserted+=n
     db.execute("UPDATE jobs SET status='مكتمل',updated_at=? WHERE id=?",(utcnow(),job_id));db.commit()
     return inserted
+
+
+def enrich_existing(db, job_id, users):
+    """Fill missing profile fields for EXISTING IDs only, never overwrite known data with blanks."""
+    changed=0; matched=0
+    for raw in users:
+        item=normalize_user(raw)
+        if not item:continue
+        old=db.execute('SELECT uid,name,username,location,protected,verified,followers_count,following_count FROM followers WHERE job_id=? AND uid=?',(job_id,item['uid'])).fetchone()
+        if old is None:continue
+        matched+=1
+        name=item['name'] or old['name'] or ''
+        username=item['username'] or old['username'] or ''
+        location=item['location'] or old['location'] or ''
+        country=guess_country(location)
+        protected=item['protected'] if item['protected'] is not None else old['protected']
+        verified=item['verified'] if item['verified'] is not None else old['verified']
+        followers=item['followers_count'] if item['followers_count'] is not None else old['followers_count']
+        following=item['following_count'] if item['following_count'] is not None else old['following_count']
+        if any((old[k] or '') != val for k,val in [('name',name),('username',username),('location',location)]):changed+=1
+        db.execute("""UPDATE followers SET name=?,username=?,location=?,country=?,protected=?,verified=?,followers_count=?,following_count=?,fetched_at=?
+             WHERE job_id=? AND uid=?""",(name,username,location,country,protected,verified,followers,following,utcnow(),job_id,item['uid']))
+    db.commit()
+    add_event(db,job_id,'إثراء',f'مطابق {matched} | بيانات اسم/يوزر/موقع محسنة {changed}')
+    return matched,changed
