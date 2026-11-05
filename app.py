@@ -1,5 +1,6 @@
 """مِرصاد | Independent Arabic multi-platform monitoring dashboard."""
 import hmac
+import json
 import os
 import time
 from collections import Counter
@@ -9,10 +10,10 @@ import pandas as pd
 import streamlit as st
 
 from core import (connect,create_job,add_event,followers_as_dicts,events_as_dicts,
-                  import_csv,job_rows,username_from_input,utcnow)
+                  import_csv,job_rows,username_from_input,utcnow,enrich_existing)
 from exporter import make_excel
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
-from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path
+from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown('''<style>
@@ -169,6 +170,24 @@ with s3:
         c.metric('غير محددة',f"{countries.get('غير محددة',0):,}")
         d.metric('صفحات / دفعات',f"{job['pages']:,}")
         if rows:
+            missing=sum(1 for r in rows if not r.get('name') or not r.get('username'))
+            if missing:
+                st.warning(f'يوجد {missing:,} حساب ناقص الاسم أو اليوزر؛ هذه قيم مفقودة في الاستجابة المخزنة وليست مشكلة في Excel.')
+                with st.expander('🛠️ استكمال البيانات الناقصة من ملف استجابة JSON'):
+                    st.caption('يمكن استيراد استجابة Get User Followers أو Get Users By IDs التي تتضمن أسماء الحسابات. لن تُضاف حسابات جديدة؛ سيُستكمل فقط ما يطابق المعرف الدائم.')
+                    enrichment=st.file_uploader('اختر JSON يحتوي على بيانات الحسابات',type=['json','txt'],key=f'enrich_{selected}')
+                    if enrichment and st.button('استكمال الاسم واليوزر والموقع',key=f'enrich_btn_{selected}'):
+                        try:
+                            if enrichment.size>20*1024*1024:raise ValueError('الحد الأقصى للملف 20 ميجابايت')
+                            payload=json.loads(enrichment.getvalue().decode('utf-8-sig'))
+                            if isinstance(payload,list):
+                                users=[u for entry in payload if (u:=__import__('rapid_client').parse_user(entry))]
+                            else:
+                                users,_=extract_users(payload)
+                            matching,changed=enrich_existing(db,selected,users)
+                            st.success(f'الحسابات المطابقة {matching} | السجلات المحسنة {changed}.')
+                            st.rerun()
+                        except (ValueError,RapidAPIError) as exc:st.error(str(exc))
             st.write('#### الحسابات حسب الدولة المعلنة (تقديري)')
             st.bar_chart(pd.Series(countries).sort_values(ascending=False))
             protected=Counter(r.get('country') or 'غير محددة' for r in rows if r.get('protected')==1)
