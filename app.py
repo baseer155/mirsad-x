@@ -16,6 +16,7 @@ from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
 from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
 from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted
 from auto_runner import step as auto_step, snapshot as auto_snapshot
+from content_status import posts_status
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown("""<style>
@@ -421,7 +422,9 @@ if page == '📊 التحليلات والتقارير':
                 checked=preview['about_checked_at'].fillna('').astype(str).str.strip().ne('')
                 for k in ('account_country','connected_via','suspension_status'):
                     preview[k]=preview[k].where(preview[k].notna() & preview[k].astype(str).str.strip().ne(''), checked.map({True:'غير متاح من المصدر',False:'لم يُفحص بعد'}))
-            st.dataframe(preview[['name','username','uid','country','location','account_country','connected_via','suspension_status','protected','verified']],hide_index=True,use_container_width=True)
+            preview['حالة المنشورات'] = preview.apply(lambda r: posts_status(r.to_dict()), axis=1)
+            st.dataframe(preview[['name','username','uid','حالة المنشورات','country','location','account_country','connected_via','suspension_status','protected','verified']],hide_index=True,use_container_width=True)
+            st.caption('عبارة «هذه المنشورات محميّة» تظهر فقط عندما يؤكد المصدر أن الحساب محمي. تعذر الجلب وحده ليس دليلًا على الحماية.')
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
             st.download_button('⬇️ تنزيل تقرير Excel المعتمد (5 أوراق)',data=make_excel(rows,events,job),file_name=f'mirsad_{selected}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary')
         if events:
