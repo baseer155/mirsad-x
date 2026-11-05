@@ -10,10 +10,10 @@ import pandas as pd
 import streamlit as st
 
 from core import (connect,create_job,add_event,followers_as_dicts,events_as_dicts,
-                  import_csv,job_rows,username_from_input,utcnow,enrich_existing)
+                  import_csv,job_rows,username_from_input,utcnow,enrich_existing,repair_legacy_rows)
 from exporter import make_excel
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
-from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users
+from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown('''<style>
@@ -71,6 +71,8 @@ except Exception as e:
 token=secret('X_BEARER_TOKEN')
 rapid_key=secret('RAPIDAPI_KEY')
 rapid_path=secret('RAPIDAPI_FOLLOWERS_PATH')
+rapid_profiles_path=secret('RAPIDAPI_PROFILES_PATH') or '/get-users'
+rapid_about_path=secret('RAPIDAPI_ABOUT_PATH')
 api_mode='RapidAPI' if rapid_key else 'X الرسمية'
 configured=bool(rapid_key and rapid_path) if rapid_key else bool(token)
 
@@ -170,9 +172,40 @@ with s3:
         c.metric('غير محددة',f"{countries.get('غير محددة',0):,}")
         d.metric('صفحات / دفعات',f"{job['pages']:,}")
         if rows:
+            with st.expander('🧹 إصلاح القيم الفاسدة المسجلة سابقًا'):
+                st.caption('يحوّل القيم غير المنطقية مثل الاسم 16 وموقع مكتوب كقاموس إلى حقول فارغة ثم يمكن إعادة محاولة استكمالها من API.')
+                if st.button('تنظيف السجلات القديمة في هذه المهمة',key=f'clean_{selected}'):
+                    repaired=repair_legacy_rows(db,selected)
+                    st.success(f'تم تنظيف {repaired} سجل. لم يتم تخمين بيانات غير متاحة.')
+                    st.rerun()
             missing=sum(1 for r in rows if not r.get('name') or not r.get('username'))
             if missing:
                 st.warning(f'يوجد {missing:,} حساب ناقص الاسم أو اليوزر؛ هذه قيم مفقودة في الاستجابة المخزنة وليست مشكلة في Excel.')
+                if rapid_key and job['platform']=='X':
+                    st.markdown('#### 🔧 استكمال الحسابات الناقصة تلقائيًا عبر RapidAPI')
+                    st.caption('يستخدم مزود twitter241 وظيفة Get Users By IDs (المسار /get-users، الحقل users). كل دفعة استعلام إضافي قد تُحتسب من باقتك. لا يبدأ أي طلب إلا بعد الضغط على الزر.')
+                    c_batch,c_number=st.columns(2)
+                    profile_batch=c_batch.number_input('معرّفات في طلب المعلومات',min_value=1,max_value=100,value=20,step=1,key=f'p_batch_{selected}')
+                    profile_pages=c_number.number_input('أقصى عدد طلبات استكمال لهذه الضغطة',min_value=1,max_value=100,value=5,step=1,key=f'p_pages_{selected}')
+                    if st.button('🔍 فحص استجابة تفاصيل 3 حسابات (طلب واحد مدفوع محتمل)',key=f'diagnose_{selected}'):
+                        try:
+                            sample_ids=[str(r['uid']) for r in rows[:3]]
+                            with st.spinner('فحص بنية استجابة المزود...'):
+                                stat=diagnose_lookup(sample_ids,rapid_key,rapid_profiles_path)
+                            st.json(stat)
+                            if not stat['matched']:
+                                st.warning('لم يعِد المسار ملفات مطابقة للمعرّفات. لا تكرر الطلبات قبل مراجعة مسار Get Users By IDs.')
+                        except RapidAPIError as e:st.error(str(e))
+                    if st.button('🔄 جلب الأسماء واليوزرات الناقصة من RapidAPI',key=f'profiles_{selected}',type='primary'):
+                        try:
+                            with st.spinner('يجري استعلام ملفات الحسابات الموجودة...'):
+                                queried,matched,changed=enrich_missing_job(db,selected,rapid_key,rapid_profiles_path,int(profile_batch),int(profile_pages))
+                            if queried and not matched:
+                                st.warning(f'تمت مطالبة المزود بتفاصيل {queried} حساب دون استرجاع ملفات مطابقة. تحقق من استجابة GET /get-users، ولا تكرر الطلبات المدفوعة حتى تفحص النتيجة.')
+                            else:
+                                st.success(f'استعلامات لعدد {queried} معرف | تفاصيل مطابقة {matched} | سجلات تحسنت {changed}')
+                            st.rerun()
+                        except RapidAPIError as e:st.error(str(e))
                 with st.expander('🛠️ استكمال البيانات الناقصة من ملف استجابة JSON'):
                     st.caption('يمكن استيراد استجابة Get User Followers أو Get Users By IDs التي تتضمن أسماء الحسابات. لن تُضاف حسابات جديدة؛ سيُستكمل فقط ما يطابق المعرف الدائم.')
                     enrichment=st.file_uploader('اختر JSON يحتوي على بيانات الحسابات',type=['json','txt'],key=f'enrich_{selected}')
@@ -188,13 +221,33 @@ with s3:
                             st.success(f'الحسابات المطابقة {matching} | السجلات المحسنة {changed}.')
                             st.rerun()
                         except (ValueError,RapidAPIError) as exc:st.error(str(exc))
+            if rapid_key and job['platform']=='X':
+                with st.expander('🌍 اختبار معلومات «حول الحساب» — الدولة / متصل عبر / الإيقاف'):
+                    st.caption('هذه البيانات لا تأتي من مسار المتابعين. يلزم إدخال المسار الحقيقي لخدمة Get About Account في RAPIDAPI_ABOUT_PATH. ابدأ بحساب واحد؛ قد تُحسب رسوم لكل طلب. لا نعدّ غياب الحساب دليل إيقاف.')
+                    if not rapid_about_path:
+                        st.info('أضف RAPIDAPI_ABOUT_PATH إلى Secrets فقط بعد التأكد من مساره ومعلمات الطلب من توثيق مزودك.')
+                    else:
+                        about_id=st.selectbox('اختبار حساب من نتائج التقرير', [str(r['uid']) for r in rows[:20]],key=f'about_id_{selected}')
+                        if st.button('فحص بيانات حول حساب واحد',key=f'about_test_{selected}'):
+                            try:
+                                from rapid_client import validate_path
+                                result=lookup_about(about_id,rapid_key,validate_path(rapid_about_path))
+                                if not any(result.values()):
+                                    st.warning('لم تتضمن الاستجابة حقولًا صريحة للدولة أو طريقة الاتصال أو الإيقاف. لا يمكن تصنيفها.')
+                                else:
+                                    db.execute('UPDATE followers SET account_country=?,connected_via=?,suspension_status=?,about_checked_at=? WHERE job_id=? AND uid=?',
+                                        (result['account_country'],result['connected_via'],result['suspension_status'],utcnow(),selected,about_id))
+                                    db.commit()
+                                    st.success('تم حفظ حقول About التي أعادها المزود صراحة.');st.json(result)
+                                    st.rerun()
+                            except RapidAPIError as e:st.error(str(e))
             st.write('#### الحسابات حسب الدولة المعلنة (تقديري)')
             st.bar_chart(pd.Series(countries).sort_values(ascending=False))
             protected=Counter(r.get('country') or 'غير محددة' for r in rows if r.get('protected')==1)
             st.write('#### الحسابات المحمية حسب الدولة')
             st.bar_chart(pd.Series(protected) if protected else pd.Series({'لا توجد حالات محمية مؤكدة':0}))
             preview=pd.DataFrame(rows[:500])
-            st.dataframe(preview[['name','username','uid','country','location','protected','verified']],hide_index=True,use_container_width=True)
+            st.dataframe(preview[['name','username','uid','country','location','account_country','connected_via','suspension_status','protected','verified']],hide_index=True,use_container_width=True)
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
             st.download_button('⬇️ تنزيل تقرير Excel المعتمد (5 أوراق)',data=make_excel(rows,events,job),file_name=f'mirsad_{selected}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary')
         if events:
