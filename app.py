@@ -18,7 +18,7 @@ from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
 from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
 from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted
 from auto_runner import step as auto_step, snapshot as auto_snapshot
-from content_status import posts_status
+from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown("""<style>
@@ -424,22 +424,34 @@ if page == '📊 التحليلات والتقارير':
                 checked=preview['about_checked_at'].fillna('').astype(str).str.strip().ne('')
                 for k in ('account_country','connected_via','suspension_status'):
                     preview[k]=preview[k].where(preview[k].notna() & preview[k].astype(str).str.strip().ne(''), checked.map({True:'غير متاح من المصدر',False:'لم يُفحص بعد'}))
-            preview['حالة المنشورات'] = preview.apply(lambda r: posts_status(r.to_dict()), axis=1)
-            st.dataframe(preview[['name','username','uid','حالة المنشورات','country','location','account_country','connected_via','suspension_status','protected','verified']],hide_index=True,use_container_width=True)
-            st.caption('عبارة «هذه المنشورات محميّة» تظهر فقط عندما يؤكد المصدر أن الحساب محمي. تعذر الجلب وحده ليس دليلًا على الحماية.')
+            preview['حالة الحساب'] = preview.apply(lambda r: account_status(r.to_dict()), axis=1)
+            preview['متصل عبر'] = preview.apply(lambda r: connected_via(r.to_dict()), axis=1)
+            preview['رابط المعرف الدائم'] = preview.apply(lambda r: account_links(r.to_dict())[0], axis=1)
+            preview['رابط الحساب'] = preview.apply(lambda r: account_links(r.to_dict())[1], axis=1)
+            preview['رابط حول الحساب'] = preview.apply(lambda r: account_links(r.to_dict())[2], axis=1)
+            st.dataframe(preview[['name','username','uid','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','country','location','account_country','متصل عبر','حالة الحساب','protected','verified']],hide_index=True,use_container_width=True)
+            st.caption('الحالة «فعال / موقوف / محجوز في السعودية» لا تعرض إلا بدليل صريح. الرابط /about يُنشأ بصيغة صحيحة ولا يضمن إمكانية فتح صفحة الحساب المقيد.')
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
             st.markdown('#### 📦 تنزيل التقارير المهنية')
             eligible_rows = exportable_rows(rows)
             excluded_count = len(rows) - len(eligible_rows)
             st.caption(f'سيُدرج في التقرير النهائي {len(eligible_rows):,} حسابًا محدد الدولة، مع استبعاد {excluded_count:,} حسابًا بلا دولة متاحة. تبقى السجلات المستبعدة محفوظة داخل النظام.')
             st.caption('Excel للبيانات التفصيلية، Word للتقرير الإداري القابل للتحرير، وPowerPoint للعرض التنفيذي. جميع الملفات تعتمد السجلات المحفوظة وقت التصدير.')
+            display_name=st.text_input('اسم الحساب المستهدف ليظهر في اسم الملف (اختياري)',value=job['target'],key=f'report_display_name_{selected}')
+            output_username=job['target']
+            timing=elapsed_metrics(job, events)
+            t1,t2,t3=st.columns(3)
+            t1.metric('زمن طلبات سحب المتابعين',fmt_duration(timing['api_seconds']))
+            t2.metric('زمن المهمة حتى آخر تحديث',fmt_duration(timing['wall_seconds']))
+            t3.metric('متوسط زمن الصفحة',fmt_duration(timing['seconds_per_page']))
+            st.caption('زمن طلبات السحب لا يشمل فحوص About. لا تتوفر مدة مستقلة دقيقة للإثراء في السجلات القديمة؛ تعكس مدة المهمة الفواصل والتوقف أيضًا.')
             ex_col, word_col, ppt_col = st.columns(3)
             with ex_col:
-                st.download_button('⬇️ تقرير Excel',data=make_excel(eligible_rows,events,job),file_name=f'account_report_{selected}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
+                st.download_button('⬇️ تقرير Excel',data=make_excel(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'xlsx'),mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
             with word_col:
-                st.download_button('⬇️ تقرير Word',data=make_word(eligible_rows,events,job),file_name=f'account_report_{selected}.docx',mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
+                st.download_button('⬇️ تقرير Word',data=make_word(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'docx'),mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
             with ppt_col:
-                st.download_button('⬇️ عرض PowerPoint',data=make_powerpoint(eligible_rows,events,job),file_name=f'account_report_{selected}.pptx',mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
+                st.download_button('⬇️ عرض PowerPoint',data=make_powerpoint(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'pptx'),mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
