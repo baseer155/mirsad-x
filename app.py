@@ -11,7 +11,8 @@ import streamlit as st
 from core import (connect,create_job,add_event,followers_as_dicts,events_as_dicts,
                   import_csv,job_rows,username_from_input,utcnow)
 from exporter import make_excel
-from x_client import XAPIError,lookup_user,fetch_batch
+from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
+from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
 st.markdown('''<style>
@@ -67,23 +68,40 @@ try:db=connect(secret('MIRSAD_DB') or 'mirsad.sqlite3')
 except Exception as e:
     st.error('تعذّر فتح قاعدة البيانات. تحقق من إعدادات التخزين.');st.stop()
 token=secret('X_BEARER_TOKEN')
+rapid_key=secret('RAPIDAPI_KEY')
+rapid_path=secret('RAPIDAPI_FOLLOWERS_PATH')
+api_mode='RapidAPI' if rapid_key else 'X الرسمية'
+configured=bool(rapid_key and rapid_path) if rapid_key else bool(token)
 
 s1,s2,s3,s4=st.tabs(['🔎 سحب متابعي X','📥 استيراد البيانات','📊 التقارير وExcel','⚙️ دليل المنصات'])
 with s1:
     st.subheader('سحب متابعي حساب عام على X')
-    st.caption('اتصال مباشر بواجهة X الرسمية فقط، وليس RapidAPI أو Apify. تشغيل كل دفعة يرسل طلبات فعلية وقد ينشئ تكلفة لدى X.')
+    st.caption('مصدر السحب الحالي: '+api_mode+' | تُحسب الطلبات حسب باقة المزود. يتطلب RapidAPI معرفًا رقميًا دائمًا للحساب.')
     user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
     c1,c2=st.columns(2)
     target_limit=c1.number_input('الحد المستهدف للحسابات الفريدة',min_value=100,max_value=1000000,value=50000,step=1000)
     page_limit=c2.slider('أقصى صفحات لكل ضغطة',1,20,3)
     st.caption('يمكن استكمال المهمة باستخدام مؤشر الصفحة المحفوظ. التقدم محسوب نحو الحد المستهدف، ولا يضمن ظهور جميع متابعي الحساب.')
-    if not token:st.warning('لم يتم ضبط X_BEARER_TOKEN. تستطيع حاليًا استخدام الاستيراد والتقارير، لكن السحب المباشر معطل.')
-    if st.button('إنشاء مهمة سحب جديدة',type='primary',disabled=not bool(token and user_raw.strip())):
+    if rapid_key and not rapid_path:st.warning('مفتاح RapidAPI محفوظ، لكن يجب إضافة RAPIDAPI_FOLLOWERS_PATH من توثيق المسار الفعلي إلى Secrets.')
+    elif not configured:st.warning('لا يوجد اتصال مكتمل. ضبط مفتاح RapidAPI ومساره، أو X_BEARER_TOKEN، لتفعيل السحب.')
+    if rapid_key:
+        target_uid_input=st.text_input('المعرف الرقمي الدائم للحساب المستهدف (User ID)',placeholder='2455740283')
+        page_count=st.number_input('الحجم المطلوب في كل طلب RapidAPI',min_value=1,max_value=200,value=20,step=10)
+    else:
+        target_uid_input=''
+        page_count=20
+    if st.button('إنشاء مهمة سحب جديدة',type='primary',disabled=not bool(configured and (target_uid_input.strip().isdigit() if rapid_key else user_raw.strip()))):
         try:
-            target=username_from_input(user_raw)
-            with st.spinner('التحقق من الحساب عبر X API...'):
-                user=lookup_user(target,token)
-            job_id=create_job(db,'X',target,str(user['id']))
+            target=username_from_input(user_raw) if user_raw.strip() else target_uid_input.strip()
+            if rapid_key:
+                validate_path(rapid_path)
+                if not target_uid_input.strip().isdigit():raise ValueError('أدخل User ID الرقمي للحساب المستهدف.')
+                uid=target_uid_input.strip()
+            else:
+                with st.spinner('التحقق من الحساب عبر X API...'):
+                    user=lookup_user(target,token)
+                uid=str(user['id'])
+            job_id=create_job(db,'X',target,uid)
             add_event(db,job_id,'إنشاء',f"تم تحديد الحساب @{target}")
             st.session_state['selected_job']=job_id
             st.success(f'تم إنشاء المهمة #{job_id} للحساب @{target}، ويمكن الآن تنفيذ دفعات السحب أدناه.')
@@ -101,7 +119,7 @@ with s1:
         d.metric('وقت API المسجل',f"{job['elapsed_seconds']:.1f} ث")
         st.progress(min(1.,unique/target_limit),text=f'التقدم نحو حد {target_limit:,} حساب')
         if job['error']:st.warning('آخر خطأ: '+job['error'])
-        disabled=not bool(token) or job['status']=='مكتمل'
+        disabled=not configured or job['status']=='مكتمل'
         if st.button('▶ تنفيذ دفعة جديدة / متابعة',disabled=disabled,type='primary'):
             progress=st.progress(0)
             status=st.empty()
@@ -109,10 +127,10 @@ with s1:
                 progress.progress(min(1.,page/page_limit))
                 status.write(f'الصفحة {page} من {page_limit} | جديد {inserted} | تكرار {duplicates}')
             try:
-                count=fetch_batch(db,selected,token,page_limit,int(target_limit),notify)
+                count=(fetch_rapid(db,selected,rapid_key,rapid_path,page_limit,int(target_limit),int(page_count),notify) if rapid_key else fetch_official(db,selected,token,page_limit,int(target_limit),notify))
                 st.success(f'اكتملت {count} صفحة. البيانات محفوظة ويمكن عرضها في تبويب التقارير.')
                 st.rerun()
-            except XAPIError as e:st.error(str(e))
+            except (XAPIError,RapidAPIError) as e:st.error(str(e))
         if job['status']=='مكتمل':st.success('أعيد مؤشر الصفحة فارغًا من X، وانتهت صفحات هذه المهمة.')
     else:st.info('أنشئ مهمة جديدة أو استورد CSV لتجربة التقارير دون X API.')
 
@@ -167,7 +185,7 @@ with s3:
 
 with s4:
     st.subheader('حالة الاتصال بحسب المنصة')
-    st.markdown('**X:** سحب مباشر عبر واجهة X API الرسمية، إذا كان رمز الوصول مفعلًا ومخوّلًا للوصول إلى المتابعين. **إنستغرام:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مستقل مصرح به لسحب جميع المتابعين. **تيك توك:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مضمون لسحب جميع المتابعين.')
+    st.markdown('**X:** يدعم RapidAPI (مع المسار الصحيح) أو واجهة X الرسمية. في وضع RapidAPI يحتاج معرف الحساب الرقمي. **إنستغرام:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مستقل مصرح به لسحب جميع المتابعين. **تيك توك:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مضمون لسحب جميع المتابعين.')
     st.markdown('**الصفحة About:** رابطها متاح داخل Excel للفحص اليدوي في X. لا نفترض أن حقول الدولة أو «متصل عبر» متاحة عبر X API الرسمي.')
     st.markdown('**الإنتاج:** ملفات SQLite المحلية على الاستضافات المؤقتة قد تُفقد عند إعادة تشغيل الخادم. لمهام كبيرة ومتكررة استخدم قرصًا دائمًا أو PostgreSQL مع عامل مهام مستقل قبل الاعتماد التشغيلي.')
     st.caption('لا ترسل أي مفاتيح API داخل المحادثات أو الصور. احفظها فقط في أسرار الاستضافة.')
