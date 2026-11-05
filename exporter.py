@@ -44,7 +44,7 @@ def make_excel(rows,events,job):
               'نعم' if r.get('protected')==1 else ('لا' if r.get('protected')==0 else 'غير متاح'),
               'نعم' if r.get('verified')==1 else ('لا' if r.get('verified')==0 else 'غير متاح'),
               r.get('followers_count'),r.get('following_count'),r.get('fetched_at'),
-              'غير متاحة عبر واجهة المتابعين','غير متاح','غير متاح']
+              r.get('account_country') or 'لم يتحقق',r.get('connected_via') or 'لم يتحقق',r.get('suspension_status') or 'لم يتحقق']
         for j,v in enumerate(cols):
             if j in (3,4,5) and v:
                 w.write_url(i,j,v,link,'فتح الرابط')
@@ -80,6 +80,6 @@ def make_excel(rows,events,job):
       ('الحساب الموقوف','لا يتم تصنيف الحساب كموقوف دون حالة صريحة من مصدر موثوق.'),
       ('معرف المستخدم','مخزن في Excel بصيغة نص للحفاظ على جميع الأرقام.'),
       ('الاكتمال','القدرة على سحب جميع الحسابات تتوقف على صلاحيات X API وحدود الخدمة.'),
-      ('المصدر','X API الرسمي عند اتصال صالح، أو CSV من مستخدم مصرح له.')]
+      ('المصدر','RapidAPI عند ضبطه، أو X API الرسمي، أو CSV. حقول الدولة حسب حول الحساب/متصل عبر/الإيقاف تتطلب استجابة مصدر إضافي صريحة.')]
     for i,(a,b) in enumerate(caveats,1):notes.write_string(i,0,a);notes.write_string(i,1,clean_cell(b))
     book.close();return output.getvalue()
