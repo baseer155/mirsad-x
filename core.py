@@ -3,6 +3,7 @@ import csv
 import io
 import re
 import sqlite3
+import ast
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,14 +46,53 @@ def clean_id(v):
     text = str(v or '').strip().removeprefix("'")
     return text if re.fullmatch(r'[0-9]{1,25}', text) else ''
 
+def safe_public_text(value, max_len=300):
+    """Never turn structured objects, numbers or metadata into human names/usernames."""
+    if isinstance(value,dict):
+        # Common X API 'location': {'location': '...'} envelope.
+        for key in ('full_name','display_name','screen_name','username','location','text','value'):
+            candidate=value.get(key)
+            if isinstance(candidate,str) and candidate.strip():
+                return candidate.strip()[:max_len]
+        return ''
+    if not isinstance(value,str):return ''
+    value=value.strip()
+    if value.startswith('{') and value.endswith('}'):
+        try:return safe_public_text(ast.literal_eval(value),max_len)
+        except (SyntaxError,ValueError):return ''
+    return value[:max_len]
+
+def safe_username(value):
+    value=safe_public_text(value,100).lstrip('@')
+    return value if re.fullmatch(r'[A-Za-z0-9_]{1,15}',value) and not value.isdigit() else ''
+
+def safe_name(value):
+    value=safe_public_text(value,300)
+    # Provider bug: '16' is often a string-length metadata field, not a display name.
+    return value if value and not value.isdigit() else ''
+
+def repair_legacy_rows(db,job_id):
+    """Mark corrupt old profile fields as missing so subsequent enrichment retries them."""
+    rows=db.execute('SELECT uid,name,username,location FROM followers WHERE job_id=?',(job_id,)).fetchall()
+    n=0
+    for r in rows:
+        name=safe_name(r['name']); username=safe_username(r['username']); location=safe_public_text(r['location'])
+        if (name,username,location)!=(r['name'] or '',r['username'] or '',r['location'] or ''):
+            db.execute('UPDATE followers SET name=?,username=?,location=?,country=? WHERE job_id=? AND uid=?',
+                       (name,username,location,guess_country(location),job_id,r['uid']))
+            n+=1
+    db.commit()
+    if n:add_event(db,job_id,'تنظيف قيم غير صحيحة',f'تم تنظيف {n} سجل؛ دون تخمين الأسماء المفقودة')
+    return n
+
 def normalize_user(user):
     uid = clean_id(user.get('id') or user.get('id_str') or user.get('user_id') or user.get('uid') or user.get('المعرف الدائم'))
     if not uid:
         return None
     metrics = user.get('public_metrics') or {}
-    name = str(user.get('name') or user.get('الاسم') or '')[:300]
-    username = str(user.get('username') or user.get('screen_name') or user.get('اليوزر') or '').strip().lstrip('@')[:100]
-    location = str(user.get('location') or user.get('الموقع المعلن') or '')[:300]
+    name = safe_name(user.get('name') or user.get('الاسم'))
+    username = safe_username(user.get('username') or user.get('screen_name') or user.get('اليوزر'))
+    location = safe_public_text(user.get('location') or user.get('الموقع المعلن'))
     def nullable_bool(key):
         value = user.get(key)
         if value is None or value == '':
@@ -100,6 +140,10 @@ def connect(path='mirsad.sqlite3'):
     );
     CREATE INDEX IF NOT EXISTS followers_country_idx ON followers(job_id,country);
     ''')
+    # Optional provenance fields: never inferred from public-profile location.
+    known={row[1] for row in db.execute('PRAGMA table_info(followers)').fetchall()}
+    for column in ('account_country','connected_via','suspension_status','about_checked_at'):
+        if column not in known:db.execute(f'ALTER TABLE followers ADD COLUMN {column} TEXT')
     db.commit()
     return db
 
@@ -159,6 +203,7 @@ def import_csv(db, job_id, content):
 
 def enrich_existing(db, job_id, users):
     """Fill missing profile fields for EXISTING IDs only, never overwrite known data with blanks."""
+    repair_legacy_rows(db,job_id)
     changed=0; matched=0
     for raw in users:
         item=normalize_user(raw)
