@@ -242,27 +242,103 @@ def diagnose_lookup(ids, key, path='/get-users'):
             'profile_with_name':sum(bool(x['name']) for x in results),
             'profile_with_username':sum(bool(x['username']) for x in results)}
 
-def about_information(payload):
-    """Use explicit origin/status indicators only; never infer suspension or connection."""
-    keys_country=('account_based_in','account_country','country_of_account','country_of_origin')
-    keys_connected=('connected_via','connected_through','app_store')
-    keys_status=('suspension_status','account_status','suspended')
-    found={'account_country':None,'connected_via':None,'suspension_status':None}
-    stack=[payload]
-    while stack:
-        obj=stack.pop()
-        if isinstance(obj,list):stack.extend(obj);continue
-        if not isinstance(obj,dict):continue
-        for field,keys in (('account_country',keys_country),('connected_via',keys_connected),('suspension_status',keys_status)):
-            if found[field] is None:
-                for key in keys:
-                    val=obj.get(key)
-                    if key=='suspended' and isinstance(val,bool):val='موقوف' if val else 'غير موقوف حسب المصدر'
-                    if isinstance(val,str) and val.strip():found[field]=val.strip()[:150];break
-        for v in obj.values():
-            if isinstance(v,(dict,list)):stack.append(v)
-    return found
+def _about_text(value):
+    '''Normalize plain text only; never stringify a dict as an account country.'''
+    if isinstance(value, str):
+        value=value.strip()
+        return value[:180] if value and value.lower() not in ('none','null','unknown','n/a') else None
+    return None
 
-def lookup_about(uid,key,path):
-    # Optional third-party route; user must confirm required query field and semantics.
-    return about_information(call(path,key,{'user':str(uid)}))
+
+def about_information(payload):
+    '''Read verified explicit fields from About Account; preserve unknowns.
+
+    The provider may wrap X's raw response in result/data/user_result objects.
+    Never derive account country from the location declared in the profile.
+    '''
+    result={'account_country':None,'connected_via':None,'suspension_status':None}
+    if not isinstance(payload,dict):return result
+    country_keys=('account_based_in','account_country','country_of_account','country_of_origin','accountBasedIn')
+    connected_keys=('connected_via','connected_through','app_store','connectedVia','connected_from')
+    status_keys=('suspension_status','account_status','suspended')
+    # Prefer specially named metadata scopes over ordinary profile fields.
+    scopes=[]; nodes=[payload]; seen=set()
+    while nodes and len(seen)<250:
+        obj=nodes.pop(0)
+        if not isinstance(obj,dict) or id(obj) in seen:continue
+        seen.add(id(obj))
+        scopes.append(obj)
+        for k,v in obj.items():
+            if isinstance(v,dict):nodes.append(v)
+            elif isinstance(v,list):nodes.extend(z for z in v if isinstance(z,dict))
+    for obj in scopes:
+        for k in country_keys:
+            if result['account_country'] is None:
+                result['account_country']=_about_text(obj.get(k))
+        for k in connected_keys:
+            if result['connected_via'] is None:
+                result['connected_via']=_about_text(obj.get(k))
+        for k in status_keys:
+            if result['suspension_status'] is None:
+                v=obj.get(k)
+                if k=='suspended' and isinstance(v,bool):
+                    result['suspension_status']='موقوف' if v else 'غير موقوف حسب المصدر'
+                elif k in ('suspension_status','account_status') and isinstance(v,str) and v.strip():
+                    result['suspension_status']=v.strip()[:180]
+    return result
+
+
+def lookup_about(username,key,path='/about-account'):
+    '''twitter241 requires username, not numeric rest_id. One billable request.'''
+    from core import safe_username
+    handle=safe_username(username)
+    if not handle:raise RapidAPIError('يجب وجود يوزر صالح للفحص؛ مسار /about-account يستقبل username وليس User ID.')
+    payload=call(path,key,{'username':handle})
+    result=about_information(payload)
+    return result
+
+
+def lookup_about_diagnostic(username,key,path='/about-account'):
+    '''One intentional request; returns only metadata keys and extracted nonsecret fields.'''
+    from core import safe_username
+    handle=safe_username(username)
+    if not handle:raise RapidAPIError('اليوزر غير متوفر أو غير صالح.')
+    payload=call(path,key,{'username':handle})
+    result=about_information(payload)
+    meta=[];todo=[payload]
+    while todo and len(meta)<45:
+        item=todo.pop(0)
+        if isinstance(item,dict):
+            meta.extend([str(k) for k in item.keys()][:15]);todo.extend(v for v in item.values() if isinstance(v,(dict,list)))
+        elif isinstance(item,list):todo.extend(z for z in item[:10] if isinstance(z,(dict,list)))
+    return {'fields':list(dict.fromkeys(meta))[:45], 'extracted':result,
+            'any_about_value':any(v is not None for v in result.values())}
+
+
+def enrich_about_job(db,job_id,key,path='/about-account',limit=5,callback=None):
+    '''Fill only missing About fields; never overwrite known values with nulls.
+    Attempts are recorded, and missing username rows are skipped, not charged.
+    '''
+    limit=max(1,min(100,int(limit)))
+    sql='''SELECT uid,username,account_country,connected_via,suspension_status
+           FROM followers WHERE job_id=? AND TRIM(COALESCE(username,''))<>''
+             AND (about_checked_at IS NULL OR about_checked_at='') ORDER BY rowid LIMIT ?'''
+    rows=db.execute(sql,(job_id,limit)).fetchall()
+    results={'attempted':0,'with_country':0,'with_connection':0,'with_status':0,'no_fields':0,'skipped_without_username':db.execute('SELECT COUNT(*) FROM followers WHERE job_id=? AND TRIM(COALESCE(username,\'\'))=\'\'',(job_id,)).fetchone()[0]}
+    for row in rows:
+        try:data=lookup_about(row['username'],key,path)
+        except RapidAPIError as ex:
+            add_event(db,job_id,'فشل فحص About',f'فشل استعلام @{row["username"]}: {ex}')
+            raise
+        results['attempted']+=1
+        data={k:(data.get(k) or row[k]) for k in ('account_country','connected_via','suspension_status')}
+        from core import utcnow
+        db.execute('''UPDATE followers SET account_country=?,connected_via=?,suspension_status=?,about_checked_at=?
+                      WHERE job_id=? AND uid=?''',(*[data[k] for k in ('account_country','connected_via','suspension_status')],utcnow(),job_id,row['uid']))
+        db.commit()
+        for k,label in [('account_country','with_country'),('connected_via','with_connection'),('suspension_status','with_status')]:
+            if data.get(k):results[label]+=1
+        if not any(data.values()):results['no_fields']+=1
+        if callback:callback(results)
+    add_event(db,job_id,'فحص حول الحساب',f"تم فحص {results['attempted']} حساب؛ بلد {results['with_country']}؛ اتصال {results['with_connection']}؛ حالة {results['with_status']}")
+    return results
