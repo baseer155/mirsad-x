@@ -18,15 +18,32 @@ from auto_enrich import policy as about_policy, set_policy as save_about_policy,
 from auto_runner import step as auto_step, snapshot as auto_snapshot
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
-st.markdown('''<style>
-html, body, [data-testid="stApp"], [data-testid="stSidebar"] {direction:rtl;text-align:right;font-family:Tahoma,Arial,sans-serif}
-[data-testid="stTextInput"] input {direction:ltr;text-align:left}
-[data-testid="stMetricValue"] {direction:ltr;text-align:right}
-section[data-testid="stSidebar"]{border-left:1px solid #ccd5d8}
-.hero{padding:22px 24px;background:linear-gradient(100deg,#102b38,#1c5660);color:white;border-radius:15px;margin-bottom:18px}
-.hero h1{font-size:2rem;margin:0;color:white}.hero p{margin:8px 0 0;color:#d1ecea}
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700;800&display=swap');
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {direction:rtl; text-align:right; font-family:'Tajawal',Tahoma,Arial,sans-serif;}
+/* Streamlit Sidebar and Main are laid out from right to left */
+[data-testid="stAppViewContainer"] {flex-direction:row-reverse !important;}
+section[data-testid="stSidebar"] {border-right:0 !important;border-left:1px solid #dbe4eb !important;background:#f6f9fc !important;}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:.55rem;}
+section[data-testid="stSidebar"] label {font-family:inherit;}
+section[data-testid="stSidebar"] [role="radiogroup"] {display:flex;flex-direction:column;gap:7px;}
+section[data-testid="stSidebar"] [role="radiogroup"] label {display:flex;align-items:center;justify-content:flex-start;border:1px solid #e2e9ef;border-radius:11px;background:#ffffff;padding:12px 10px;margin:0;min-height:43px;transition:background .2s,border .2s;}
+section[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {background:#e2f3f2;border-color:#0f9188;color:#0b564f;font-weight:800;}
+section[data-testid="stSidebar"] [role="radiogroup"] label:hover {background:#edf7f7;}
+[data-testid="stMainBlockContainer"] {max-width:1400px;padding:1.5rem 2rem 3rem;}
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input {direction:ltr;text-align:left;}
+[data-testid="stMetricValue"] {direction:ltr;text-align:right;font-family:'Tajawal',sans-serif;}
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {direction:ltr;}
+h1,h2,h3,h4,p,button,span {font-family:'Tajawal',Tahoma,Arial,sans-serif;}
+.hero{padding:28px 32px;background:linear-gradient(115deg,#0c2836,#16505b);color:white;border-radius:18px;margin-bottom:20px;box-shadow:0 8px 24px #15384b14;}
+.hero h1{font-size:2.3rem;margin:0;color:white;font-weight:800;}.hero p{margin:8px 0 0;color:#d1ecea;font-size:1rem;}
 .small{color:#6b7280;font-size:13px}
-</style>''',unsafe_allow_html=True)
+.section-title{border-right:4px solid #159a8c;padding-right:12px;margin:14px 0 18px;font-weight:800;color:#143546}
+section[data-testid="stSidebar"] h1 {font-size:1.35rem;}
+div[data-testid="stMetric"] {background:#fff;border:1px solid #e3eaf0;border-radius:13px;padding:13px 17px;}
+div[data-testid="stAlert"] {border-radius:11px;}
+@media(max-width:800px){[data-testid="stMainBlockContainer"]{padding:1rem}.hero{padding:17px}.hero h1{font-size:1.55rem}}
+</style>""",unsafe_allow_html=True)
 
 def secret(name):
     try:return str(st.secrets.get(name,'')).strip()
@@ -78,8 +95,30 @@ rapid_about_path=secret('RAPIDAPI_ABOUT_PATH') or '/about-account'
 api_mode='RapidAPI' if rapid_key else 'X الرسمية'
 configured=bool(rapid_key and rapid_path) if rapid_key else bool(token)
 
-s1,s2,s3,s4=st.tabs(['🔎 سحب متابعي X','📥 استيراد البيانات','📊 التقارير وExcel','⚙️ دليل المنصات'])
-with s1:
+# قائمة رئيسية عمودية على يمين الموقع — كل قسم مستقل
+with st.sidebar:
+    st.markdown('### 🧭 القائمة الرئيسية')
+    page = st.radio('الأقسام', ['🏠 الرئيسية', '🔎 سحب متابعي X', '📥 استيراد البيانات', '📊 التحليلات والتقارير', '⚙️ دليل المنصات'],
+        label_visibility='collapsed', key='mirsad_section')
+    st.caption('مِرصاد — الإصدار العربي | API والبيانات محفوظة على الخادم')
+
+if page == '🏠 الرئيسية':
+    st.markdown('<h2 class="section-title">لوحة التحكم الرئيسية</h2>', unsafe_allow_html=True)
+    all_jobs=job_rows(db)
+    all_count=db.execute('SELECT COUNT(*) FROM followers').fetchone()[0]
+    all_events=db.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+    k1,k2,k3=st.columns(3)
+    k1.metric('إجمالي الحسابات المحفوظة',f'{all_count:,}')
+    k2.metric('المهام المنشأة',f'{len(all_jobs):,}')
+    k3.metric('أحداث سجل التشغيل',f'{all_events:,}')
+    st.markdown('#### المهام الحديثة')
+    if all_jobs:
+        st.dataframe(pd.DataFrame([dict(x) for x in all_jobs[:15]])[['id','platform','target','status','pages','scanned','updated_at']],hide_index=True,use_container_width=True)
+    else:
+        st.info('لم تبدأ أي مهمة بعد. استخدم قائمة «سحب متابعي X» على اليمين.')
+    st.caption('تقدم السحب الفعلي يعتمد على الصفحات التي يعيدها المزود. بلوغ نهاية الصفحات لا يعني الوصول إلى العدد المستهدف بالضرورة.')
+
+if page == '🔎 سحب متابعي X':
     st.subheader('سحب متابعي حساب عام على X')
     st.caption('مصدر السحب الحالي: '+api_mode+' | تُحسب الطلبات حسب باقة المزود. يتطلب RapidAPI معرفًا رقميًا دائمًا للحساب.')
     user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
@@ -171,6 +210,7 @@ with s1:
             bstart,bstop=st.columns(2)
             if bstart.button('▶ بدء التشغيل المتسلسل',key=f'continuous_start_{selected}',disabled=not configured or job['pages']>=page_cap):
                 st.session_state[auto_key]=True
+                st.session_state[f'stall_{selected}']=0
                 reset_interrupted(db,selected)
                 add_event(db,selected,'بدء التشغيل الآلي',f'الهدف {auto_goal} | سقف الصفحات {page_cap} | إثراء 50 لكل دورة')
                 st.rerun()
@@ -215,10 +255,22 @@ with s1:
                                      page_limit=min(int(page_limit),max_pages-int(row['pages'])),
                                      page_count=int(page_count),about_batch=50,
                                      do_fetch=True,do_about=True)
-                st.caption(f"الدورة الحالية: {result['fetched_pages']} صفحة متابعة | {result['about_attempted']} فحص About | {result['about_completed']} اكتمل")
+                st.caption(f"الدورة الحالية: {result['fetched_pages']} صفحة متابعة | {result['about_attempted']} فحص About | {result['about_completed']} اكتمل | متابعون جدد: {result.get('new_unique',0)}")
+                # لا نعيد تدوير صفحات لا تقدم معرفات جديدة إلى ما لا نهاية.
+                stall_key=f'stall_{job_id}'
+                if result['fetched_pages']>0 and result.get('new_unique',0)==0:
+                    st.session_state[stall_key]=st.session_state.get(stall_key,0)+1
+                elif result.get('new_unique',0)>0:
+                    st.session_state[stall_key]=0
+                if result['state']=='running' and st.session_state.get(stall_key,0)>=2:
+                    result['state']='paused'
+                    result['message']='توقّف احترازي: دورتان متتاليتان دون أي حساب جديد. افحص Cursor وحدود المزود قبل الاستئناف.'
+                    add_event(db,job_id,'حماية من الدوران','دورتان من الصفحات دون حسابات فريدة جديدة')
                 if result['state']!='running':
                     st.session_state[active_key]=False
-                    st.info('توقف التشغيل الآلي: '+result['message'])
+                    st.info('انتهت أو توقفت الدورة الآلية: '+result['message'])
+                    if result['snapshot']['job_status']=='مكتمل' and result['snapshot']['unique'] < goal:
+                        st.warning('أعاد مزود البيانات نهاية الصفحات عند عدد أقل من الهدف. لن يعيد مِرصاد طلب الصفحات نفسها تلقائيًا؛ راجع حدود مزود البيانات وصلاحيات الحساب.')
                 else:
                     st.success('حُفظ تقدم هذه الدورة؛ ستبدأ الدورة التالية تلقائيًا ما دامت الصفحة متصلة.')
             continuous_panel(selected,int(auto_goal),int(page_cap),auto_key)
@@ -243,7 +295,7 @@ with s1:
         if job['status']=='مكتمل':st.success('أعيد مؤشر الصفحة فارغًا من X، وانتهت صفحات هذه المهمة.')
     else:st.info('أنشئ مهمة جديدة أو استورد CSV لتجربة التقارير دون X API.')
 
-with s2:
+if page == '📥 استيراد البيانات':
     st.subheader('استيراد بيانات منصات التواصل')
     platform=st.selectbox('المنصة',options=['X','TikTok','Instagram'])
     label=st.text_input('عنوان المجموعة',placeholder='مثال: عينة متابعين 2026')
@@ -261,7 +313,7 @@ with s2:
         except Exception as e:st.error(f'تعذّر الاستيراد: {e}')
     st.download_button('تحميل قالب CSV تجريبي',data='id,username,name,location,protected,verified\n1234567890123456789,example,Example User,Riyadh,false,false\n',file_name='mirsad_template.csv',mime='text/csv')
 
-with s3:
+if page == '📊 التحليلات والتقارير':
     st.subheader('التحليلات والتصدير')
     jobs=job_rows(db)
     if not jobs:st.info('لا توجد مهام بعد. ابدأ سحبًا أو استورد CSV.');
@@ -274,7 +326,7 @@ with s3:
             st.caption(f"إثراء About: {rep['done']:,}/{rep['total']:,} | طلبات مستخدمة {rep['used_requests']:,} | دول مسجلة {rep['with_country']:,} | ينتظر إعادة المحاولة {rep['retry']:,}")
         rows=followers_as_dicts(db,selected)
         events=events_as_dicts(db,selected)
-        countries=Counter(r.get('country') or 'غير محددة' for r in rows)
+        countries=Counter(r.get('account_country') or 'غير محددة' for r in rows)
         a,b,c,d=st.columns(4)
         a.metric('فريد',f'{len(rows):,}')
         b.metric('الدول المصنفة',sum(1 for key in countries if key!='غير محددة'))
@@ -358,9 +410,9 @@ with s3:
                                 st.rerun()
                             except RapidAPIError as e:st.error(str(e))
                     st.caption('حالة الإيقاف لا يمكن ضمان اكتشافها لقائمة متابعين موجودة؛ فحص About لا يعادل فحص حالة حساب موقوف. استخدم مصدر حالة مستقلًا إن توفر.')
-            st.write('#### الحسابات حسب الدولة المعلنة (تقديري)')
+            st.write('#### الحسابات حسب دولة «حول الحساب» (عندما تتوفر)')
             st.bar_chart(pd.Series(countries).sort_values(ascending=False))
-            protected=Counter(r.get('country') or 'غير محددة' for r in rows if r.get('protected')==1)
+            protected=Counter(r.get('account_country') or 'غير محددة' for r in rows if r.get('protected')==1)
             st.write('#### الحسابات المحمية حسب الدولة')
             st.bar_chart(pd.Series(protected) if protected else pd.Series({'لا توجد حالات محمية مؤكدة':0}))
             preview=pd.DataFrame(rows[:500])
@@ -375,9 +427,9 @@ with s3:
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
-        st.warning('الدولة في هذا التقرير مستنتجة من موقع الملف الشخصي. بيانات بلد إنشاء الحساب و«متصل عبر» والحسابات الموقوفة ليست متاحة في مسار متابعي X الرسمي ولا يجري اختلاقها.')
+        st.info('تعتمد الإحصاءات الجغرافية أعلاه على account_country من خدمة «حول الحساب» عند توفره؛ المواقع المعلنة بيانات مختلفة. ولا تُستنتج حالة الإيقاف من غياب النتائج.')
 
-with s4:
+if page == '⚙️ دليل المنصات':
     st.subheader('حالة الاتصال بحسب المنصة')
     st.markdown('**X:** يدعم RapidAPI (مع المسار الصحيح) أو واجهة X الرسمية. في وضع RapidAPI يحتاج معرف الحساب الرقمي. **إنستغرام:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مستقل مصرح به لسحب جميع المتابعين. **تيك توك:** استيراد CSV وتحليل وتصدير؛ لا يوجد محرك مضمون لسحب جميع المتابعين.')
     st.markdown('**الصفحة About:** رابطها متاح داخل Excel للفحص اليدوي في X. لا نفترض أن حقول الدولة أو «متصل عبر» متاحة عبر X API الرسمي.')
