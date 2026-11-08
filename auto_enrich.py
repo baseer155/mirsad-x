@@ -161,3 +161,27 @@ def reset_interrupted(db,job_id):
         db.execute("UPDATE about_attempts SET state=?,retry_after=NULL,last_error='انقطاع أثناء الطلب' WHERE job_id=? AND uid=?",(state,job_id,r['uid']))
     db.commit()
     return len(rows)
+
+
+def requeue_missing_connection(db,job_id,max_rows=50):
+    """Explicit user-requested retry; each repeated About API call may incur a charge."""
+    _synchronize(db,job_id)
+    max_rows=max(1,min(200,int(max_rows)))
+    rows=db.execute("""SELECT a.uid FROM about_attempts a JOIN followers f
+      ON f.job_id=a.job_id AND f.uid=a.uid
+      WHERE a.job_id=? AND a.state='done' AND TRIM(COALESCE(f.username,''))<>''
+      AND TRIM(COALESCE(f.connected_via,''))=''
+      ORDER BY f.rowid LIMIT ?""",(job_id,max_rows)).fetchall()
+    for r in rows:
+        db.execute("UPDATE about_attempts SET state='pending',retry_after=NULL WHERE job_id=? AND uid=?",(job_id,r['uid']))
+    db.commit()
+    if rows:add_event(db,job_id,'إعادة فحص متصل عبر',f'أعيدت جدولة {len(rows)} حسابًا بعد طلب المستخدم')
+    return len(rows)
+
+
+def connection_stats(db,job_id):
+    _synchronize(db,job_id)
+    total=db.execute('SELECT COUNT(*) FROM followers WHERE job_id=?',(job_id,)).fetchone()[0]
+    checked=db.execute("SELECT COUNT(*) FROM followers WHERE job_id=? AND COALESCE(about_checked_at,'')<>''",(job_id,)).fetchone()[0]
+    known=db.execute("SELECT COUNT(*) FROM followers WHERE job_id=? AND TRIM(COALESCE(connected_via,''))<>''",(job_id,)).fetchone()[0]
+    return {'total':total,'checked':checked,'known':known,'unavailable':max(0,checked-known)}
