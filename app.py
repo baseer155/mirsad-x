@@ -11,13 +11,16 @@ import streamlit as st
 
 from core import (connect,create_job,add_event,followers_as_dicts,events_as_dicts,
                   import_csv,job_rows,username_from_input,utcnow,enrich_existing,repair_legacy_rows)
-from exporter import make_excel
+from exporter import make_excel, make_group_excel
 from report_export import make_word, make_powerpoint
 from filtering import exportable_rows
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
 from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
-from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted
+from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted, requeue_missing_connection, connection_stats
 from auto_runner import step as auto_step, snapshot as auto_snapshot
+from multi_accounts import (parse_targets, create_group, get_groups, get_group, members as group_members,
+                            resume as resume_group, set_status as set_group_status, tick as group_tick)
+from performance import configure as configure_speed, metrics as speed_metrics
 from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
@@ -26,7 +29,7 @@ st.markdown("""<style>
 html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {direction:rtl; text-align:right; font-family:'Tajawal',Tahoma,Arial,sans-serif;}
 /* Streamlit Sidebar and Main are laid out from right to left */
 [data-testid="stAppViewContainer"] {flex-direction:row-reverse !important;}
-section[data-testid="stSidebar"] {border-right:0 !important;border-left:1px solid #dbe4eb !important;background:#f6f9fc !important;}
+section[data-testid="stSidebar"] {right:0 !important;left:auto !important;border-right:0 !important;border-left:1px solid #dbe4eb !important;background:#f6f9fc !important;}
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:.55rem;}
 section[data-testid="stSidebar"] label {font-family:inherit;}
 section[data-testid="stSidebar"] [role="radiogroup"] {display:flex;flex-direction:column;gap:7px;}
@@ -36,7 +39,7 @@ section[data-testid="stSidebar"] [role="radiogroup"] label:hover {background:#ed
 [data-testid="stMainBlockContainer"] {max-width:1400px;padding:1.5rem 2rem 3rem;}
 [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input {direction:ltr;text-align:left;}
 [data-testid="stMetricValue"] {direction:ltr;text-align:right;font-family:'Tajawal',sans-serif;}
-[data-testid="stDataFrame"], [data-testid="stDataEditor"] {direction:ltr;}
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {direction:rtl;}
 h1,h2,h3,h4,p,button,span {font-family:'Tajawal',Tahoma,Arial,sans-serif;}
 .hero{padding:28px 32px;background:linear-gradient(115deg,#0c2836,#16505b);color:white;border-radius:18px;margin-bottom:20px;box-shadow:0 8px 24px #15384b14;}
 .hero h1{font-size:2.3rem;margin:0;color:white;font-weight:800;}.hero p{margin:8px 0 0;color:#d1ecea;font-size:1rem;}
@@ -76,8 +79,8 @@ if not admin:
     c2.metric('تيك توك','استيراد ملفات')
     c3.metric('إنستغرام','استيراد ملفات')
     st.info('الموقع عام، لكن أدوات استخراج البيانات والملفات محمية بالدخول. لا تُعرض أي مفاتيح API للزوار.')
-    st.markdown('**المزايا:** معرّفات دائمة بصيغة نص، تنظيف التكرارات، تحليل الموقع المعلن، مخططات وتصدير Excel عربي بخمس أوراق.')
-    st.caption('لا يمكن اعتبار بلد المستخدم من صفحة «حول الحساب» متاحًا ضمن X API الرسمي للمتابعين. البيانات الجغرافية المستخرجة من الموقع المعلن تقديرية.')
+    st.markdown('**المزايا:** معرّفات دائمة بصيغة نص، تنظيف التكرارات، تحليل دولة الحساب من «حول الحساب»، مخططات وتصدير Excel عربي بخمس أوراق.')
+    st.caption('دولة الحساب تعتمد فقط على صفحة «حول الحساب» عند توفر بياناتها من مزود الخدمة، ولا تعبّر بالضرورة عن الجنسية أو الموقع الحالي.')
     if not secret('ADMIN_PASSWORD'):st.warning('لم تُضبط ADMIN_PASSWORD في إعدادات أسرار الخادم، ولذلك لوحة الإدارة معطلة حمايةً للبيانات.')
     st.stop()
 
@@ -122,7 +125,108 @@ if page == '🏠 الرئيسية':
     st.caption('تقدم السحب الفعلي يعتمد على الصفحات التي يعيدها المزود. بلوغ نهاية الصفحات لا يعني الوصول إلى العدد المستهدف بالضرورة.')
 
 if page == '🔎 سحب متابعي X':
-    st.subheader('سحب متابعي حساب عام على X')
+    st.markdown('### 🗂️ السحب الجماعي — عدة حسابات بمهمة واحدة')
+    st.caption('أضف الحسابات وشغّل المجموعة؛ تُحفظ النتائج والتقدم لكل حساب.')
+    with st.expander('➕ إنشاء مجموعة سحب جديدة', expanded=False):
+        with st.form('multi_target_create', clear_on_submit=False):
+            multi_name=st.text_input('اسم المجموعة', value='مجموعة متابعة X')
+            raw_targets=st.text_area('حساب واحد في كل سطر: اليوزر، المعرّف الرقمي',
+                placeholder='@account_one,123456789\nhttps://x.com/account_two | 987654321',height=145)
+            st.caption('حتى 100 حساب؛ يُقرأ عدد المتابعين آليًا عند تشغيل المجموعة. يتطلب المزود رقم الحساب الدائم.')
+            aa,bb,cc=st.columns(3)
+            per_target_goal=1000000
+            aa.info('العدد المستهدف يُقرأ من RapidAPI تلقائيًا')
+            per_target_pages=bb.number_input('سقف الصفحات لكل حساب',min_value=1,max_value=100000,value=3000,step=250)
+            multi_page_size=cc.number_input('متابعون مطلوبون لكل طلب',min_value=1,max_value=200,value=20,step=10)
+            dd,ee,ff=st.columns(3)
+            pages_tick=dd.number_input('صفحات في دورة الحساب',min_value=1,max_value=5,value=1)
+            about_tick=ee.number_input('فحوص About في الدورة',min_value=1,max_value=50,value=10)
+            ff.markdown('**إثراء About آلي**')
+            ff.caption('تُضاف حسابات جديدة إلى طابور الفحص مع كل دفعة')
+            about_enabled=st.checkbox('فحص «حول الحساب» تلقائيًا للمتابعين',value=True)
+            st.caption('قد يُحتسب طلب API لكل حساب متابع عند فحص About؛ راجع رسوم وحدود اشتراكك.')
+            submitted=st.form_submit_button('إنشاء مجموعة الحسابات',type='primary',disabled=not bool(rapid_key and rapid_path))
+        if submitted:
+            items,problems=parse_targets(raw_targets)
+            if problems:
+                st.error('لم تُنشأ المجموعة؛ صحّح الإدخال:\n'+'\n'.join('• '+err for err in problems[:15]))
+            else:
+                try:
+                    gid=create_group(db,multi_name,items,goal=per_target_goal,page_cap=per_target_pages,
+                       page_size=multi_page_size,pages_per_tick=pages_tick,about_per_tick=about_tick,
+                       about_enabled=about_enabled)
+                    st.session_state['selected_group']=gid
+                    st.success(f'أُنشئت المجموعة #{gid} وفيها {len(items)} حسابات مستقلة. شغّل المجموعة من الأسفل.')
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f'لم يتم إنشاء المجموعة: {type(exc).__name__}')
+    groups=get_groups(db)
+    if groups:
+        names={g['id']:f"#{g['id']} | {g['name']} | {g['status']}" for g in groups}
+        group_id=st.selectbox('📁 إدارة مجموعة الحسابات',list(names),format_func=lambda k:names[k],
+                  index=next((i for i,k in enumerate(names) if k==st.session_state.get('selected_group')),0),key='multi_group_selected')
+        group=get_group(db,group_id)
+        gr=group_members(db,group_id)
+        total_unique=sum(r['unique_count'] for r in gr)
+        total_country=sum(r['with_country'] for r in gr)
+        gm1,gm2,gm3,gm4=st.columns(4)
+        gm1.metric('الحسابات المستهدفة',len(gr))
+        gm2.metric('المتابعون المسحوبون',f'{total_unique:,}')
+        gm3.metric('دولة من About',f'{total_country:,}')
+        gm4.metric('المهام المكتملة',f"{sum(r['state']=='مكتمل' for r in gr):,} / {len(gr)}")
+        st.progress(min(1.,total_unique/max(1,len(gr)*group['goal_per_target'])),text='التقدم التجميعي (كل هدف مستقل)')
+        dataframe=pd.DataFrame([{'الحساب':'@'+r['target'],'المعرف':r['target_uid'],
+                   'المتابعون':r['unique_count'],'العدد المعلن لدى المصدر':r['follower_total'] if r['follower_total'] is not None else 'غير متاح', 'دولة من About':r['with_country'],
+                   'الصفحات':r['pages'],'حالة المجموعة':r['state'],
+                   'الوقت (ث)':round(r['elapsed_seconds'],1),'ملاحظة':r['message'] or ''} for r in gr])
+        st.dataframe(dataframe,hide_index=True,use_container_width=True)
+        with st.expander('⚡ ضبط سرعة المجموعة',expanded=False):
+            speed_data=speed_metrics(db,group_id)
+            rate=st.number_input('سقف طلبات RapidAPI في الدقيقة',min_value=1,max_value=120,value=int(speed_data['rpm_limit']),key=f'rpm_{group_id}')
+            size=st.number_input('عدد المتابعين المطلوب في الصفحة',min_value=1,max_value=200,value=100,key=f'size_{group_id}')
+            if st.button('حفظ سرعة المجموعة',key=f'speed_save_{group_id}'):
+                configure_speed(db,group_id,rpm=rate,page_size=size)
+                st.success('تم تحديث سرعة المجموعة')
+            st.caption(f"طلبات متاحة في الدقيقة الحالية: {speed_data['remaining_window']} | انتظار: {speed_data['wait_seconds']} ثانية")
+        st.download_button('⬇️ Excel — الحسابات المشتركة والتداخل',data=make_group_excel(db,group_id),
+            file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            key=f'group_overlap_{group_id}',use_container_width=True)
+        st.caption('تُقارن الحسابات المشتركة بواسطة المعرّف الدائم؛ يحتفظ كل حساب مستهدف بمتابعيه المستقلين.')
+        running_key=f'multi_running_{group_id}'
+        col_start,col_stop=st.columns(2)
+        if col_start.button('▶ تشغيل / استئناف جميع الحسابات',key=f'multi_start_{group_id}',
+                  disabled=not bool(rapid_key and rapid_path) or all(r['state']=='مكتمل' for r in gr)):
+            resume_group(db,group_id)
+            st.session_state[running_key]=True
+            st.rerun()
+        if col_stop.button('⏸ إيقاف المجموعة وحفظ التقدم',key=f'multi_stop_{group_id}'):
+            st.session_state[running_key]=False
+            set_group_status(db,group_id,'متوقف')
+            st.rerun()
+        @st.fragment(run_every='2s')
+        def multi_group_panel(gid,session_key):
+            g=get_group(db,gid)
+            rs=group_members(db,gid)
+            st.caption(f"الحالة: {g['status']} | حسابات قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
+            if not st.session_state.get(session_key,False):
+                st.info('المجموعة غير نشطة في جلسة المتصفح الحالية. اضغط تشغيل لاستكمالها.')
+                return
+            if g['status']!='قيد التشغيل':
+                st.session_state[session_key]=False
+                st.info('اكتملت المهام الممكنة أو توقفت؛ راجع حالة كل حساب.')
+                return
+            with st.spinner('جاري السحب والتحقق من About للحساب التالي بالتناوب...'):
+                answer=group_tick(db,gid,rapid_key=rapid_key,followers_path=rapid_path,about_path=rapid_about_path,profiles_path=rapid_profiles_path)
+            if answer.get('target'):
+                st.caption(f"آخر حساب: @{answer['target']} | جديد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)} | الحالة: {answer['state']}")
+            if answer.get('state')=='finished':
+                st.session_state[session_key]=False
+                st.info(answer['message'])
+            else:
+                st.caption('النتائج والـCursor محفوظة بعد كل دفعة؛ يستمر الحساب التالي في دورة التحديث المقبلة.')
+        multi_group_panel(group_id,running_key)
+    st.divider()
+    st.subheader('سحب متابعي حساب واحد على X')
     st.caption('مصدر السحب الحالي: '+api_mode+' | تُحسب الطلبات حسب باقة المزود. يتطلب RapidAPI معرفًا رقميًا دائمًا للحساب.')
     user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
     c1,c2=st.columns(2)
@@ -303,7 +407,7 @@ if page == '📥 استيراد البيانات':
     platform=st.selectbox('المنصة',options=['X','TikTok','Instagram'])
     label=st.text_input('عنوان المجموعة',placeholder='مثال: عينة متابعين 2026')
     file=st.file_uploader('ملف CSV بصيغة UTF-8',type=['csv'])
-    st.caption('الحقول الأساسية: id أو user_id أو uid أو «المعرف الدائم»، ويمكن إضافة username وname وlocation. لا يُطلب مفتاح API للاستيراد.')
+    st.caption('الحقول الأساسية: id أو user_id أو uid أو «المعرف الدائم»، ويمكن إضافة username وname. لا يُطلب مفتاح API للاستيراد.')
     if st.button('استيراد وحفظ',disabled=not bool(file and label.strip()),type='primary'):
         try:
             # Prevent uncontrolled memory use in public deployments.
@@ -314,7 +418,7 @@ if page == '📥 استيراد البيانات':
             add_event(db,job_id,'استيراد',f'حسابات جديدة: {inserted}')
             st.success(f'تم استيراد {inserted:,} سجل فريد إلى المهمة #{job_id}.')
         except Exception as e:st.error(f'تعذّر الاستيراد: {e}')
-    st.download_button('تحميل قالب CSV تجريبي',data='id,username,name,location,protected,verified\n1234567890123456789,example,Example User,Riyadh,false,false\n',file_name='mirsad_template.csv',mime='text/csv')
+    st.download_button('تحميل قالب CSV تجريبي',data='id,username,name,protected,verified\n1234567890123456789,example,Example User,false,false\n',file_name='mirsad_template.csv',mime='text/csv')
 
 if page == '📊 التحليلات والتقارير':
     st.subheader('التحليلات والتصدير')
@@ -329,11 +433,12 @@ if page == '📊 التحليلات والتقارير':
             st.caption(f"إثراء About: {rep['done']:,}/{rep['total']:,} | طلبات مستخدمة {rep['used_requests']:,} | دول مسجلة {rep['with_country']:,} | ينتظر إعادة المحاولة {rep['retry']:,}")
         rows=followers_as_dicts(db,selected)
         events=events_as_dicts(db,selected)
-        countries=Counter(r.get('account_country') or 'غير محددة' for r in rows)
+        eligible_rows = exportable_rows(rows)
+        countries=Counter(r['account_country'] for r in eligible_rows)
         a,b,c,d=st.columns(4)
         a.metric('فريد',f'{len(rows):,}')
-        b.metric('الدول المصنفة',sum(1 for key in countries if key!='غير محددة'))
-        c.metric('غير محددة',f"{countries.get('غير محددة',0):,}")
+        b.metric('الدول المصنفة',len(countries))
+        c.metric('غير محددة',f"{len(rows)-len(eligible_rows):,}")
         d.metric('صفحات / دفعات',f"{job['pages']:,}")
         if rows:
             with st.expander('🧹 إصلاح القيم الفاسدة المسجلة سابقًا'):
@@ -387,6 +492,14 @@ if page == '📊 التحليلات والتقارير':
                         except (ValueError,RapidAPIError) as exc:st.error(str(exc))
             if rapid_key and job['platform']=='X':
                 with st.expander('🌍 فحص «حول الحساب»: بلد الحساب / متصل عبر / حالة الإيقاف', expanded=True):
+                    cs=connection_stats(db,selected)
+                    st.caption(f"متصل عبر: متاح لـ {cs['known']:,} من {cs['checked']:,} حسابًا تم فحصه")
+                    if cs['unavailable']:
+                        retry_n=st.number_input('إعادة فحص سجلات الاتصال الناقصة (طلبات مدفوعة محتملة)',min_value=1,max_value=200,value=min(20,cs['unavailable']),key=f'conn_retry_n_{selected}')
+                        if st.button('إعادة جدولة فحص متصل عبر',key=f'conn_retry_{selected}'):
+                            n=requeue_missing_connection(db,selected,int(retry_n))
+                            st.info(f'أُعيدت جدولة {n} حسابًا؛ شغّل إثراء About لفحصها مجددًا. قد تُحتسب طلبات جديدة.')
+
                     st.caption('المسار twitter241: GET /about-account والوسيط username. يتم فحص كل حساب بطلب مستقل قد يكون مدفوعًا. الحالة غير مؤكدة إذا لم يصرح المصدر بها. لا نستنتج بلد الحساب من الموقع المعلن.')
                     valid=[r for r in rows if r.get('username')]
                     if not valid:
@@ -415,7 +528,7 @@ if page == '📊 التحليلات والتقارير':
                     st.caption('حالة الإيقاف لا يمكن ضمان اكتشافها لقائمة متابعين موجودة؛ فحص About لا يعادل فحص حالة حساب موقوف. استخدم مصدر حالة مستقلًا إن توفر.')
             st.write('#### الحسابات حسب دولة «حول الحساب» (عندما تتوفر)')
             st.bar_chart(pd.Series(countries).sort_values(ascending=False))
-            protected=Counter(r.get('account_country') or 'غير محددة' for r in rows if r.get('protected')==1)
+            protected=Counter(r['account_country'] for r in eligible_rows if r.get('protected')==1)
             st.write('#### الحسابات المحمية حسب الدولة')
             st.bar_chart(pd.Series(protected) if protected else pd.Series({'لا توجد حالات محمية مؤكدة':0}))
             preview=pd.DataFrame(rows[:500])
@@ -429,7 +542,7 @@ if page == '📊 التحليلات والتقارير':
             preview['رابط المعرف الدائم'] = preview.apply(lambda r: account_links(r.to_dict())[0], axis=1)
             preview['رابط الحساب'] = preview.apply(lambda r: account_links(r.to_dict())[1], axis=1)
             preview['رابط حول الحساب'] = preview.apply(lambda r: account_links(r.to_dict())[2], axis=1)
-            st.dataframe(preview[['name','username','uid','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','country','location','account_country','متصل عبر','حالة الحساب','protected','verified']],hide_index=True,use_container_width=True)
+            st.dataframe(preview[['name','username','uid','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','account_country','متصل عبر','حالة الحساب','protected','verified']],hide_index=True,use_container_width=True)
             st.caption('الحالة «فعال / موقوف / محجوز في السعودية» لا تعرض إلا بدليل صريح. الرابط /about يُنشأ بصيغة صحيحة ولا يضمن إمكانية فتح صفحة الحساب المقيد.')
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
             st.markdown('#### 📦 تنزيل التقارير المهنية')
@@ -455,7 +568,7 @@ if page == '📊 التحليلات والتقارير':
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
-        st.info('تعتمد الإحصاءات الجغرافية أعلاه على account_country من خدمة «حول الحساب» عند توفره؛ المواقع المعلنة بيانات مختلفة. ولا تُستنتج حالة الإيقاف من غياب النتائج.')
+        st.info('تعتمد الإحصاءات والتقارير حصريًا على دولة الحساب من صفحة «حول الحساب»؛ تستبعد الحسابات بلا دولة متاحة من التصدير، ولا تُحذف من قاعدة البيانات. لا تُستنتج حالة الإيقاف من غياب النتائج.')
 
 if page == '⚙️ دليل المنصات':
     st.subheader('حالة الاتصال بحسب المنصة')
