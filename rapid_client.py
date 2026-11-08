@@ -243,49 +243,75 @@ def diagnose_lookup(ids, key, path='/get-users'):
             'profile_with_username':sum(bool(x['username']) for x in results)}
 
 def _about_text(value):
-    '''Normalize plain text only; never stringify a dict as an account country.'''
-    if isinstance(value, str):
-        value=value.strip()
-        return value[:180] if value and value.lower() not in ('none','null','unknown','n/a') else None
+    """Only accept a meaningful string or an explicitly labelled nested field."""
+    if isinstance(value,str):
+        t=value.strip()
+        return t[:180] if t and t.lower() not in ('none','null','unknown','n/a','undefined') else None
+    if isinstance(value,dict):
+        for k in ('name','label','value','text','country','country_name','display_name'):
+            v=value.get(k)
+            if isinstance(v,str) and v.strip():return _about_text(v)
     return None
 
 
-def about_information(payload):
-    '''Read verified explicit fields from About Account; preserve unknowns.
+def _about_nodes(payload, max_nodes=300):
+    queue=[('',payload)]; seen=set(); n=0
+    while queue and n<max_nodes:
+        path,node=queue.pop(0)
+        if not isinstance(node,(dict,list)) or id(node) in seen:continue
+        seen.add(id(node));n+=1
+        if isinstance(node,dict):
+            yield path,node
+            for k,v in node.items():
+                if isinstance(v,(dict,list)):
+                    queue.append((f'{path}.{k}' if path else str(k),v))
+        elif isinstance(node,list):
+            for i,v in enumerate(node[:20]):
+                if isinstance(v,(dict,list)):queue.append((f'{path}[{i}]',v))
 
-    The provider may wrap X's raw response in result/data/user_result objects.
-    Never derive account country from the location declared in the profile.
-    '''
+
+def about_information(payload):
+    """Read explicit About values. Never infer connection channel from generic post source."""
     result={'account_country':None,'connected_via':None,'suspension_status':None}
-    if not isinstance(payload,dict):return result
-    country_keys=('account_based_in','account_country','country_of_account','country_of_origin','accountBasedIn')
-    connected_keys=('connected_via','connected_through','app_store','connectedVia','connected_from')
-    status_keys=('suspension_status','account_status','suspended')
-    # Prefer specially named metadata scopes over ordinary profile fields.
-    scopes=[]; nodes=[payload]; seen=set()
-    while nodes and len(seen)<250:
-        obj=nodes.pop(0)
-        if not isinstance(obj,dict) or id(obj) in seen:continue
-        seen.add(id(obj))
-        scopes.append(obj)
-        for k,v in obj.items():
-            if isinstance(v,dict):nodes.append(v)
-            elif isinstance(v,list):nodes.extend(z for z in v if isinstance(z,dict))
-    for obj in scopes:
-        for k in country_keys:
-            if result['account_country'] is None:
-                result['account_country']=_about_text(obj.get(k))
-        for k in connected_keys:
-            if result['connected_via'] is None:
-                result['connected_via']=_about_text(obj.get(k))
-        for k in status_keys:
-            if result['suspension_status'] is None:
-                v=obj.get(k)
-                if k=='suspended' and isinstance(v,bool):
-                    result['suspension_status']='موقوف' if v else 'غير موقوف حسب المصدر'
-                elif k in ('suspension_status','account_status') and isinstance(v,str) and v.strip():
-                    result['suspension_status']=v.strip()[:180]
+    country_keys={'account_based_in','accountBasedIn','account_country','accountCountry',
+                  'country_of_account','country_of_origin','countryOfOrigin','account_based_in_country'}
+    connection_keys={'connected_via','connectedVia','connected_through','connectedThrough',
+                     'connection_type','connectionType','connected_by','connectedBy',
+                     'connection_source','connectionSource','app_store','appStore'}
+    status_keys={'suspension_status','suspensionStatus','account_status','accountStatus','suspended','is_suspended'}
+    for path,node in _about_nodes(payload):
+        context=path.casefold()
+        about_context=any(x in context for x in ('about','account_info','accountinfo','account_metadata','accountmetadata'))
+        for k,v in node.items():
+            # Some providers embed the visible "Connected via" label in a nested About object.
+            normalized=str(k).strip().casefold().replace(' ','_').replace('-','_')
+            connection_label=normalized in {'connected_via','connected_through','connection_type',
+                                          'connected_by','connection_source','متصل_عبر'}
+            if result['account_country'] is None and k in country_keys:
+                result['account_country']=_about_text(v)
+            if result['connected_via'] is None and (k in connection_keys or connection_label):
+                result['connected_via']=_about_text(v)
+            if result['connected_via'] is None and about_context and k in ('source','signup_source','signupSource'):
+                result['connected_via']=_about_text(v)
+            if result['suspension_status'] is None and k in status_keys:
+                if isinstance(v,bool) and k in ('suspended','is_suspended'):
+                    result['suspension_status']='موقوف حسب المصدر' if v else 'غير موقوف حسب المصدر'
+                elif isinstance(v,str):
+                    result['suspension_status']=_about_text(v)
     return result
+
+
+def about_shape(payload):
+    """Safe schema-only diagnostics. Never include response field values or API secrets."""
+    names=[]
+    for path,node in _about_nodes(payload):
+        for k,v in node.items():
+            full=f'{path}.{k}' if path else str(k)
+            # schema only: sensitive values, identifiers and tokens are never disclosed
+            kind='object' if isinstance(v,dict) else 'array' if isinstance(v,list) else type(v).__name__
+            names.append({'field':full[:160],'type':kind})
+            if len(names)>=120:return names
+    return names
 
 
 def lookup_about(username,key,path='/about-account'):
@@ -299,20 +325,16 @@ def lookup_about(username,key,path='/about-account'):
 
 
 def lookup_about_diagnostic(username,key,path='/about-account'):
-    '''One intentional request; returns only metadata keys and extracted nonsecret fields.'''
+    """Single intentional request, output only schema and explicitly approved About labels."""
     from core import safe_username
     handle=safe_username(username)
     if not handle:raise RapidAPIError('اليوزر غير متوفر أو غير صالح.')
     payload=call(path,key,{'username':handle})
-    result=about_information(payload)
-    meta=[];todo=[payload]
-    while todo and len(meta)<45:
-        item=todo.pop(0)
-        if isinstance(item,dict):
-            meta.extend([str(k) for k in item.keys()][:15]);todo.extend(v for v in item.values() if isinstance(v,(dict,list)))
-        elif isinstance(item,list):todo.extend(z for z in item[:10] if isinstance(z,(dict,list)))
-    return {'fields':list(dict.fromkeys(meta))[:45], 'extracted':result,
-            'any_about_value':any(v is not None for v in result.values())}
+    parsed=about_information(payload)
+    return {'endpoint':path,'query_parameter':'username',
+            'schema':about_shape(payload), 'extracted':parsed,
+            'any_about_value':any(x is not None for x in parsed.values()),
+            'message':'هذا الفحص يعرض أسماء الحقول وأنواعها فقط. إذا لا توجد حقول صريحة فلن يمكن إثبات الدولة أو نوع الاتصال أو حالة الإيقاف.'}
 
 
 def enrich_about_job(db,job_id,key,path='/about-account',limit=5,callback=None):
