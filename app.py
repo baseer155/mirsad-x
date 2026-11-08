@@ -1,5 +1,6 @@
 """مِرصاد | Independent Arabic multi-platform monitoring dashboard."""
 import hmac
+from contextlib import closing
 import json
 import os
 import time
@@ -15,12 +16,13 @@ from exporter import make_excel, make_group_excel
 from report_export import make_word, make_powerpoint
 from filtering import exportable_rows
 from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
-from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job
+from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job, lookup_profiles_by_ids
 from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted, requeue_missing_connection, connection_stats
 from auto_runner import step as auto_step, snapshot as auto_snapshot
 from multi_accounts import (parse_targets, create_group, get_groups, get_group, members as group_members,
                             resume as resume_group, set_status as set_group_status, tick as group_tick)
 from performance import configure as configure_speed, metrics as speed_metrics
+from readiness import inspect_job, inspect_group
 from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
@@ -48,6 +50,13 @@ h1,h2,h3,h4,p,button,span {font-family:'Tajawal',Tahoma,Arial,sans-serif;}
 section[data-testid="stSidebar"] h1 {font-size:1.35rem;}
 div[data-testid="stMetric"] {background:#fff;border:1px solid #e3eaf0;border-radius:13px;padding:13px 17px;}
 div[data-testid="stAlert"] {border-radius:11px;}
+[data-testid="stMain"] {direction:rtl;text-align:right;}
+[data-testid="stExpander"] {border-radius:14px;border-color:#e1e9ef;}
+[data-testid="stButton"] button, [data-testid="stDownloadButton"] button {border-radius:11px;font-weight:700;}
+[data-testid="stMain"] label {text-align:right;}
+[data-testid="stMain"] textarea {direction:ltr;text-align:left;}
+[data-testid="stMain"] h2,[data-testid="stMain"] h3 {letter-spacing:0;line-height:1.5;}
+
 @media(max-width:800px){[data-testid="stMainBlockContainer"]{padding:1rem}.hero{padding:17px}.hero h1{font-size:1.55rem}}
 </style>""",unsafe_allow_html=True)
 
@@ -88,9 +97,10 @@ with st.sidebar:
     st.success('لوحة المسؤول مفتوحة')
     if st.button('تسجيل الخروج',use_container_width=True):
         st.session_state['authenticated']=False;st.rerun()
-    st.caption('المفاتيح محفوظة في إعدادات الخادم ولا تظهر هنا.')
 
-try:db=connect(secret('MIRSAD_DB') or 'mirsad.sqlite3')
+
+db_path=secret('MIRSAD_DB') or 'mirsad.sqlite3'
+try:db=connect(db_path)
 except Exception as e:
     st.error('تعذّر فتح قاعدة البيانات. تحقق من إعدادات التخزين.');st.stop()
 token=secret('X_BEARER_TOKEN')
@@ -100,13 +110,43 @@ rapid_profiles_path=secret('RAPIDAPI_PROFILES_PATH') or '/get-users'
 rapid_about_path=secret('RAPIDAPI_ABOUT_PATH') or '/about-account'
 api_mode='RapidAPI' if rapid_key else 'X الرسمية'
 configured=bool(rapid_key and rapid_path) if rapid_key else bool(token)
+external_worker=secret('MIRSAD_EXTERNAL_WORKER').lower() in ('1','true','yes')
+
+# Persist provider follower totals independently from the user-defined page safety cap.
+# A failed lookup is recorded to prevent billable retries on every Streamlit rerun.
+def _ensure_single_target_counts(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS single_target_counts (
+        job_id INTEGER PRIMARY KEY, follower_total INTEGER, checked_at TEXT NOT NULL,
+        error TEXT, FOREIGN KEY(job_id) REFERENCES jobs(id))""")
+    conn.commit()
+
+def _read_single_target_count(conn, job_id, target_uid, api_key, profiles_path, *, retry=False):
+    _ensure_single_target_counts(conn)
+    row=conn.execute('SELECT follower_total,checked_at,error FROM single_target_counts WHERE job_id=?',(job_id,)).fetchone()
+    if row is not None and not retry:
+        return dict(row)
+    try:
+        records=lookup_profiles_by_ids([str(target_uid)],api_key,profiles_path)
+        match=next((x for x in records if str(x.get('id'))==str(target_uid)),None)
+        value=match.get('followers_count') if match else None
+        count=int(value) if value is not None and str(value).strip().isdigit() else None
+        error=None if count is not None else 'مزود الخدمة لم يرجع عدد المتابعين'
+    except Exception as exc:
+        count=None
+        error='تعذر استعلام مزود الخدمة: '+type(exc).__name__
+    conn.execute("""INSERT INTO single_target_counts(job_id,follower_total,checked_at,error)
+                  VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+                  follower_total=excluded.follower_total,checked_at=excluded.checked_at,error=excluded.error""",
+                 (job_id,count,utcnow(),error))
+    conn.commit()
+    return {'follower_total':count,'checked_at':utcnow(),'error':error}
 
 # قائمة رئيسية عمودية على يمين الموقع — كل قسم مستقل
 with st.sidebar:
     st.markdown('### 🧭 القائمة الرئيسية')
     page = st.radio('الأقسام', ['🏠 الرئيسية', '🔎 سحب متابعي X', '📥 استيراد البيانات', '📊 التحليلات والتقارير', '⚙️ دليل المنصات'],
         label_visibility='collapsed', key='mirsad_section')
-    st.caption('مِرصاد — الإصدار العربي | API والبيانات محفوظة على الخادم')
+    st.caption('الإعدادات المتقدمة متاحة ضمن صفحات المهام')
 
 if page == '🏠 الرئيسية':
     st.markdown('<h2 class="section-title">لوحة التحكم الرئيسية</h2>', unsafe_allow_html=True)
@@ -126,18 +166,20 @@ if page == '🏠 الرئيسية':
 
 if page == '🔎 سحب متابعي X':
     st.markdown('### 🗂️ السحب الجماعي — عدة حسابات بمهمة واحدة')
-    st.caption('أضف الحسابات وشغّل المجموعة؛ تُحفظ النتائج والتقدم لكل حساب.')
-    with st.expander('➕ إنشاء مجموعة سحب جديدة', expanded=False):
+    st.caption('أدخل الحسابات، ثم شغّل المجموعة وتابع تقدمها من مكان واحد.')
+    with st.expander('➕ إنشاء مجموعة جديدة', expanded=False):
         with st.form('multi_target_create', clear_on_submit=False):
             multi_name=st.text_input('اسم المجموعة', value='مجموعة متابعة X')
             raw_targets=st.text_area('حساب واحد في كل سطر: اليوزر، المعرّف الرقمي',
                 placeholder='@account_one,123456789\nhttps://x.com/account_two | 987654321',height=145)
             st.caption('حتى 100 حساب؛ يُقرأ عدد المتابعين آليًا عند تشغيل المجموعة. يتطلب المزود رقم الحساب الدائم.')
+            st.markdown('**إعدادات السحب**')
             aa,bb,cc=st.columns(3)
             per_target_goal=1000000
             aa.info('العدد المستهدف يُقرأ من RapidAPI تلقائيًا')
             per_target_pages=bb.number_input('سقف الصفحات لكل حساب',min_value=1,max_value=100000,value=3000,step=250)
             multi_page_size=cc.number_input('متابعون مطلوبون لكل طلب',min_value=1,max_value=200,value=20,step=10)
+            st.caption('إعدادات التشغيل المتقدمة: اترك القيم الافتراضية ما لم تستدعِ الباقة غير ذلك.')
             dd,ee,ff=st.columns(3)
             pages_tick=dd.number_input('صفحات في دورة الحساب',min_value=1,max_value=5,value=1)
             about_tick=ee.number_input('فحوص About في الدورة',min_value=1,max_value=50,value=10)
@@ -167,6 +209,11 @@ if page == '🔎 سحب متابعي X':
                   index=next((i for i,k in enumerate(names) if k==st.session_state.get('selected_group')),0),key='multi_group_selected')
         group=get_group(db,group_id)
         gr=group_members(db,group_id)
+        group_quality=inspect_group(db,group_id)
+        if group_quality['approved']:
+            st.success('✅ تم الانتهاء من المهمة — نتائج المجموعة مؤهلة')
+        else:
+            st.info('حالة اعتماد المجموعة: '+group_quality['reason'])
         total_unique=sum(r['unique_count'] for r in gr)
         total_country=sum(r['with_country'] for r in gr)
         gm1,gm2,gm3,gm4=st.columns(4)
@@ -188,7 +235,7 @@ if page == '🔎 سحب متابعي X':
                 configure_speed(db,group_id,rpm=rate,page_size=size)
                 st.success('تم تحديث سرعة المجموعة')
             st.caption(f"طلبات متاحة في الدقيقة الحالية: {speed_data['remaining_window']} | انتظار: {speed_data['wait_seconds']} ثانية")
-        st.download_button('⬇️ Excel — الحسابات المشتركة والتداخل',data=make_group_excel(db,group_id),
+        st.download_button(('⬇️ Excel — نتائج المجموعة النهائية' if group_quality['approved'] else '⬇️ Excel — نتائج المجموعة الأولية'),data=make_group_excel(db,group_id),
             file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             key=f'group_overlap_{group_id}',use_container_width=True)
         st.caption('تُقارن الحسابات المشتركة بواسطة المعرّف الدائم؛ يحتفظ كل حساب مستهدف بمتابعيه المستقلين.')
@@ -205,6 +252,10 @@ if page == '🔎 سحب متابعي X':
             st.rerun()
         @st.fragment(run_every='2s')
         def multi_group_panel(gid,session_key):
+            with closing(connect(db_path)) as _fragment_db:
+                return _multi_group_panel_inner(_fragment_db,gid,session_key)
+
+        def _multi_group_panel_inner(db,gid,session_key):
             g=get_group(db,gid)
             rs=group_members(db,gid)
             st.caption(f"الحالة: {g['status']} | حسابات قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
@@ -213,7 +264,13 @@ if page == '🔎 سحب متابعي X':
                 return
             if g['status']!='قيد التشغيل':
                 st.session_state[session_key]=False
-                st.info('اكتملت المهام الممكنة أو توقفت؛ راجع حالة كل حساب.')
+                if inspect_group(db,gid)['approved']:
+                    st.success('✅ تم الانتهاء من المهمة')
+                else:
+                    st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
+                return
+            if external_worker:
+                st.info('التشغيل يتم بواسطة عامل المهام الخارجي؛ تُعرض النتائج عند تحديث الصفحة.')
                 return
             with st.spinner('جاري السحب والتحقق من About للحساب التالي بالتناوب...'):
                 answer=group_tick(db,gid,rapid_key=rapid_key,followers_path=rapid_path,about_path=rapid_about_path,profiles_path=rapid_profiles_path)
@@ -221,7 +278,12 @@ if page == '🔎 سحب متابعي X':
                 st.caption(f"آخر حساب: @{answer['target']} | جديد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)} | الحالة: {answer['state']}")
             if answer.get('state')=='finished':
                 st.session_state[session_key]=False
-                st.info(answer['message'])
+                latest=get_group(db,gid)
+                latest_members=group_members(db,gid)
+                if inspect_group(db,gid)['approved']:
+                    st.success('✅ تم الانتهاء من المهمة')
+                else:
+                    st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
             else:
                 st.caption('النتائج والـCursor محفوظة بعد كل دفعة؛ يستمر الحساب التالي في دورة التحديث المقبلة.')
         multi_group_panel(group_id,running_key)
@@ -229,10 +291,11 @@ if page == '🔎 سحب متابعي X':
     st.subheader('سحب متابعي حساب واحد على X')
     st.caption('مصدر السحب الحالي: '+api_mode+' | تُحسب الطلبات حسب باقة المزود. يتطلب RapidAPI معرفًا رقميًا دائمًا للحساب.')
     user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
-    c1,c2=st.columns(2)
-    target_limit=c1.number_input('الحد المستهدف للحسابات الفريدة',min_value=100,max_value=1000000,value=50000,step=1000)
-    page_limit=c2.slider('أقصى صفحات لكل ضغطة',1,20,3)
-    st.caption('يمكن استكمال المهمة باستخدام مؤشر الصفحة المحفوظ. التقدم محسوب نحو الحد المستهدف، ولا يضمن ظهور جميع متابعي الحساب.')
+    page_limit=st.slider('أقصى صفحات لكل ضغطة',1,20,3)
+    st.caption('يُقرأ إجمالي المتابعين تلقائيًا من بيانات الحساب عند توفره؛ لا تحتاج إلى إدخال العدد. سقف الصفحات يبقى حماية مستقلة لتكلفة API.')
+    # Provider count is resolved after a job exists; safe high cap is a fallback,
+    # not a claim that the account has this many followers.
+    target_limit=1000000
     if rapid_key and not rapid_path:st.warning('مفتاح RapidAPI محفوظ، لكن يجب إضافة RAPIDAPI_FOLLOWERS_PATH من توثيق المسار الفعلي إلى Secrets.')
     elif not configured:st.warning('لا يوجد اتصال مكتمل. ضبط مفتاح RapidAPI ومساره، أو X_BEARER_TOKEN، لتفعيل السحب.')
     if rapid_key:
@@ -263,12 +326,26 @@ if page == '🔎 سحب متابعي X':
         selected=st.selectbox('مهمة موجودة للاستكمال',options=list(choices),format_func=lambda x:choices[x],index=next((i for i,k in enumerate(choices) if k==st.session_state.get('selected_job')),0))
         job=db.execute('SELECT * FROM jobs WHERE id=?',(selected,)).fetchone()
         unique=db.execute('SELECT COUNT(*) FROM followers WHERE job_id=?',(selected,)).fetchone()[0]
+        if rapid_key:
+            profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path)
+            if st.button('↻ إعادة قراءة عدد المتابعين من المصدر',key=f'refresh_total_{selected}',help='يُرسل طلبًا إضافيًا وقد يحتسب ضمن باقة RapidAPI'):
+                profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path,retry=True)
+            provider_total=profile_count.get('follower_total')
+            if provider_total is not None:
+                target_limit=max(1,int(provider_total))
+                st.metric('عدد المتابعين وفق بيانات X',f'{target_limit:,}')
+                if unique>target_limit:
+                    st.caption('المستخرج أكبر من العدد المعلن؛ قد تكون بيانات المصدر متأخرة أو تغير عدد المتابعين.')
+            else:
+                st.info('عدد متابعي الحساب غير متاح من RapidAPI؛ يستمر السحب وفق نهاية الصفحات وسقف الحماية، دون إدخال عدد يدوي.')
+        else:
+            st.caption('يحدد السحب التلقائي نهاية القائمة المتاحة من API الرسمي إن أمكن.')
         a,b,c,d=st.columns(4)
         a.metric('حسابات فريدة',f'{unique:,}')
         b.metric('سجلات تمت معالجتها',f"{job['scanned']:,}")
         c.metric('تكرارات مستبعدة',f"{job['duplicates']:,}")
         d.metric('وقت API المسجل',f"{job['elapsed_seconds']:.1f} ث")
-        st.progress(min(1.,unique/target_limit),text=f'التقدم نحو حد {target_limit:,} حساب')
+        st.progress(min(1.,unique/target_limit),text=(f'التقدم نحو عدد المتابعين المعلن: {target_limit:,}' if rapid_key and provider_total is not None else 'المتابعون المستخرجون — العدد الإجمالي غير متاح'))
         if job['error']:st.warning('آخر خطأ: '+job['error'])
         if rapid_key:
             st.markdown('#### 🌍 إثراء «حول الحساب» التلقائي — مستقل عن السحب')
@@ -306,11 +383,11 @@ if page == '🔎 سحب متابعي X':
             st.markdown('#### ⚡ تشغيل متسلسل تلقائي مع خط زمني')
             st.caption('اضغط تشغيل مرة واحدة؛ ستتتابع صفحات المتابعين ودفعات إثراء About (حتى 50 حسابًا لكل دورة) ما دام المتصفح متصلًا والتطبيق نشطًا. لا يعمل كخدمة خلفية عند إغلاق الصفحة.')
             auto_key=f'continuous_{selected}'
-            goal_key=f'continuous_goal_{selected}'
             cap_key=f'continuous_page_cap_{selected}'
             if auto_key not in st.session_state:st.session_state[auto_key]=False
+            auto_goal=int(target_limit)
             x1,x2,x3=st.columns(3)
-            auto_goal=x1.number_input('الهدف النهائي للحسابات الفريدة',min_value=1,max_value=1000000,value=int(target_limit),step=100,key=goal_key)
+            x1.metric('عدد المتابعين المستهدف تلقائيًا',f'{auto_goal:,}' if provider_total is not None else 'حتى نهاية الصفحات')
             page_cap=x2.number_input('سقف إجمالي صفحات السحب (حماية من تكاليف المصدر)',min_value=1,max_value=100000,value=250,step=50,key=cap_key)
             x3.metric('صفحات السحب المستخدمة',f"{job['pages']:,} / {int(page_cap):,}")
             st.caption('حد طلبات About والتكلفة المحددان في «الميزانية وضبط الإثراء» يظلان مفعلين. سقف الصفحات لا يشمل استعلامات جلب بيانات الملفات الشخصية.')
@@ -328,6 +405,10 @@ if page == '🔎 سحب متابعي X':
 
             @st.fragment(run_every='4s')
             def continuous_panel(job_id,goal,max_pages,active_key):
+                with closing(connect(db_path)) as _fragment_db:
+                    return _continuous_panel_inner(_fragment_db,job_id,goal,max_pages,active_key)
+
+            def _continuous_panel_inner(db,job_id,goal,max_pages,active_key):
                 info=auto_snapshot(db,job_id,goal)
                 a=info['about']
                 z1,z2,z3,z4=st.columns(4)
@@ -375,7 +456,10 @@ if page == '🔎 سحب متابعي X':
                     add_event(db,job_id,'حماية من الدوران','دورتان من الصفحات دون حسابات فريدة جديدة')
                 if result['state']!='running':
                     st.session_state[active_key]=False
-                    st.info('انتهت أو توقفت الدورة الآلية: '+result['message'])
+                    if inspect_job(db,job_id)['approved']:
+                        st.success('✅ تم الانتهاء من المهمة')
+                    else:
+                        st.warning('توقفت المهمة قبل اكتمالها: '+result['message'])
                     if result['snapshot']['job_status']=='مكتمل' and result['snapshot']['unique'] < goal:
                         st.warning('أعاد مزود البيانات نهاية الصفحات عند عدد أقل من الهدف. لن يعيد مِرصاد طلب الصفحات نفسها تلقائيًا؛ راجع حدود مزود البيانات وصلاحيات الحساب.')
                 else:
@@ -399,7 +483,8 @@ if page == '🔎 سحب متابعي X':
                 st.success(f'اكتملت {count} صفحة. البيانات محفوظة ويمكن عرضها في تبويب التقارير.')
                 st.rerun()
             except (XAPIError,RapidAPIError) as e:st.error(str(e))
-        if job['status']=='مكتمل':st.success('أعيد مؤشر الصفحة فارغًا من X، وانتهت صفحات هذه المهمة.')
+        if job['status']=='مكتمل':
+            st.success('✅ تم الانتهاء من المهمة', icon=None)
     else:st.info('أنشئ مهمة جديدة أو استورد CSV لتجربة التقارير دون X API.')
 
 if page == '📥 استيراد البيانات':
@@ -545,6 +630,16 @@ if page == '📊 التحليلات والتقارير':
             st.dataframe(preview[['name','username','uid','رابط المعرف الدائم','رابط الحساب','رابط حول الحساب','account_country','متصل عبر','حالة الحساب','protected','verified']],hide_index=True,use_container_width=True)
             st.caption('الحالة «فعال / موقوف / محجوز في السعودية» لا تعرض إلا بدليل صريح. الرابط /about يُنشأ بصيغة صحيحة ولا يضمن إمكانية فتح صفحة الحساب المقيد.')
             st.caption('يظهر أول 500 سجل للمعاينة فقط، بينما Excel يتضمن جميع السجلات المحفوظة.')
+            readiness=inspect_job(db,selected)
+            st.markdown('#### التحقق من اكتمال المهمة')
+            ra,rb,rc=st.columns(3)
+            ra.metric('نهاية صفحات السحب','مؤكدة' if readiness['fetch_complete'] else 'غير مؤكدة')
+            rb.metric('فحوص About الناجحة',f"{readiness['about_done']:,} / {readiness['total']:,}")
+            rc.metric('حسابات بدولة من About',f"{readiness['with_country']:,}")
+            if readiness['approved']:
+                st.success('✅ تم الانتهاء من المهمة — التقرير النهائي مؤهل للاعتماد')
+            else:
+                st.warning('تقرير أولي غير معتمد: '+readiness['reason'])
             st.markdown('#### 📦 تنزيل التقارير المهنية')
             eligible_rows = exportable_rows(rows)
             excluded_count = len(rows) - len(eligible_rows)
@@ -560,11 +655,11 @@ if page == '📊 التحليلات والتقارير':
             st.caption('زمن طلبات السحب لا يشمل فحوص About. لا تتوفر مدة مستقلة دقيقة للإثراء في السجلات القديمة؛ تعكس مدة المهمة الفواصل والتوقف أيضًا.')
             ex_col, word_col, ppt_col = st.columns(3)
             with ex_col:
-                st.download_button('⬇️ تقرير Excel',data=make_excel(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'xlsx'),mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
+                st.download_button(('⬇️ تقرير Excel النهائي' if readiness['approved'] else '⬇️ تقرير Excel أولي'),data=make_excel(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'xlsx'),mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
             with word_col:
-                st.download_button('⬇️ تقرير Word',data=make_word(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'docx'),mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
+                st.download_button(('⬇️ تقرير Word النهائي' if readiness['approved'] else '⬇️ تقرير Word أولي'),data=make_word(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'docx'),mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
             with ppt_col:
-                st.download_button('⬇️ عرض PowerPoint',data=make_powerpoint(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'pptx'),mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
+                st.download_button(('⬇️ عرض PowerPoint النهائي' if readiness['approved'] else '⬇️ عرض PowerPoint أولي'),data=make_powerpoint(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'pptx'),mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
