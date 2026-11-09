@@ -136,7 +136,7 @@ def _ppt_native_geo_chart(slide, known):
 def _safe_filename(s):return re.sub(r'[^\w\-]+','_',_s(s))[:50] or 'report'
 
 
-def make_word(rows,events,job):
+def make_word(rows,events,job,audit=None):
     d=Document();sec=d.sections[0];sec.top_margin=Cm(1.8);sec.bottom_margin=Cm(1.8);sec.left_margin=Cm(1.8);sec.right_margin=Cm(1.8)
     styles=d.styles;styles['Normal'].font.name='Arial';styles['Normal'].font.size=Pt(10)
     rows=exportable_rows(rows)
@@ -144,6 +144,11 @@ def make_word(rows,events,job):
     _para(d,'التقرير التنفيذي لتحليل الحسابات',17,True)
     _para(d,'منصة: '+summ['platform']+'  |  الحساب المستهدف: '+summ['target'],11)
     _para(d,'تاريخ إصدار التقرير: '+datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),9,color=GREY)
+    if audit is not None:
+        from report_audit import audit_lines
+        _section(d,'حالة التحقق من التقرير')
+        _para(d,audit['status']+' — '+audit['reason'],11,True,TEAL if audit['approved'] else NAVY)
+        _table(d,['المؤشر','القيمة'],[(str(k),str(v)) for k,v in audit_lines(audit) if k not in ('سبب الحالة',)])
     _section(d,'الملخص التنفيذي')
     _para(d,f"يتضمن هذا التقرير {summ['total']:,} حسابًا فريدًا محفوظًا. تم رصد دولة الحساب من صفحة «حول الحساب» لعدد {summ['about']:,} حسابًا، ولا تُفترض الدولة عند غياب معلومة صريحة.")
     _table(d,['المؤشر','القيمة'],[
@@ -196,7 +201,7 @@ def _base_slide(pres,title,num):
     return slide
 
 
-def make_powerpoint(rows,events,job):
+def make_powerpoint(rows,events,job,audit=None):
     rows=exportable_rows(rows)
     s=_summary(rows,events,job);p=Presentation();p.slide_width=Inches(13.333);p.slide_height=Inches(7.5)
     slide=p.slides.add_slide(p.slide_layouts[6]);slide.background.fill.solid();slide.background.fill.fore_color.rgb=PPTColor(255,255,255)
@@ -205,6 +210,13 @@ def make_powerpoint(rows,events,job):
     _ppt_text(slide,.8,1.6,11.7,1.3,'تقرير تحليل الحسابات',36,True,NAVY)
     _ppt_text(slide,.8,3.2,11.7,.8,'تقرير تنفيذي لتحليل الحسابات',25,False,TEAL)
     _ppt_text(slide,.8,5.6,11.7,.5,f"الحساب المستهدف: {s['target']}  |  {datetime.now(timezone.utc).strftime('%Y-%m-%d')} UTC",15,False,GREY)
+    if audit is not None:
+        slide=_base_slide(p,'حالة التحقق من التقرير',2)
+        _ppt_text(slide,.8,1.25,11.8,.7,audit['status'],28,True,TEAL if audit['approved'] else NAVY)
+        _ppt_text(slide,.8,2.2,11.8,.9,audit['reason'][:175],17)
+        _ppt_text(slide,.8,3.45,11.8,.6,f"المسحوب: {audit['total_followers']:,}  |  المؤهل: {audit['exported']:,}  |  المستبعد: {audit['excluded_without_country']:,}",19)
+        _ppt_text(slide,.8,4.4,11.8,.6,f"About المكتمل: {audit['about_done']:,}  |  المعلق: {audit['about_pending']:,}",19)
+        _ppt_text(slide,.8,5.45,11.8,.6,'مرجع التحقق الداخلي: '+audit['audit_id']+'  |  '+audit['checked_at'],12,color=GREY)
     slide=_base_slide(p,'الملخص التنفيذي',2)
     metrics=[('حسابات فريدة',s['total']),('أسماء متاحة',s['named']),('دول محددة',len(s['known'])),('فحص دولة متاح',s['about']),('محمي مؤكد',s['protected']),('دول مختلفة',len(s['known']))]
     for i,(label,value) in enumerate(metrics):
