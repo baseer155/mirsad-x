@@ -24,6 +24,8 @@ from multi_accounts import (parse_targets, resolve_targets, create_group, get_gr
 from performance import configure as configure_speed, metrics as speed_metrics
 from readiness import inspect_job, inspect_group
 from report_audit import manifest_for_job, manifest_for_group
+from ops_backup import backup_bytes, backup_filename
+from ops_health import db_health, security_flags
 from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
@@ -103,14 +105,29 @@ def signed_in():
     password=secret('ADMIN_PASSWORD')
     if not password:return False
     if st.session_state.get('authenticated') is True:return True
+    # Session-level cooldown is an additional guard, not a substitute for
+    # infrastructure-level authentication / rate limiting.
+    blocked_until = st.session_state.get('login_blocked_until', 0.0)
+    locked = time.monotonic() < blocked_until
     with st.sidebar.form('login'):
-        value=st.text_input('كلمة مرور المسؤول',type='password')
-        ok=st.form_submit_button('دخول المسؤول',use_container_width=True)
-    if ok:
+        value=st.text_input('كلمة مرور المسؤول',type='password',disabled=locked)
+        ok=st.form_submit_button('دخول المسؤول',use_container_width=True,disabled=locked)
+    if locked:
+        st.sidebar.warning('محاولات دخول متكررة. أعد المحاولة بعد انتهاء مهلة الحماية.')
+    elif ok:
         if hmac.compare_digest(value,password):
             st.session_state['authenticated']=True
+            st.session_state['login_failures']=0
+            st.session_state.pop('login_blocked_until',None)
             st.rerun()
-        else:st.sidebar.error('كلمة المرور غير صحيحة')
+        else:
+            failures=int(st.session_state.get('login_failures',0))+1
+            st.session_state['login_failures']=failures
+            if failures>=5:
+                st.session_state['login_blocked_until']=time.monotonic()+300
+                st.session_state['login_failures']=0
+                st.sidebar.warning('تم تفعيل مهلة حماية لتكرار محاولات الدخول.')
+            else:st.sidebar.error('كلمة المرور غير صحيحة')
     return False
 
 st.markdown('<div class="hero"><div class="hero-brow">لوحة العمليات الرقمية</div><h1>مِرصاد</h1><p>إدارة مهام السحب والتحليل والتقارير</p></div>',unsafe_allow_html=True)
@@ -179,7 +196,7 @@ def _read_single_target_count(conn, job_id, target_uid, api_key, profiles_path, 
 # قائمة رئيسية عمودية على يمين الموقع — كل قسم مستقل
 with st.sidebar:
     st.markdown('### القائمة الرئيسية')
-    page = st.radio('الأقسام', ['🏠 الرئيسية', '🔎 سحب متابعي X', '📥 استيراد البيانات', '📊 التحليلات والتقارير', '⚙️ دليل المنصات'],
+    page = st.radio('الأقسام', ['🏠 الرئيسية', '🔎 سحب متابعي X', '📥 استيراد البيانات', '📊 التحليلات والتقارير', '🛡️ الأمان والمراقبة', '⚙️ دليل المنصات'],
         label_visibility='collapsed', key='mirsad_section')
     
 
@@ -744,6 +761,50 @@ if page == '📊 التحليلات والتقارير':
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
         st.info('تعتمد الإحصاءات والتقارير حصريًا على دولة الحساب من صفحة «حول الحساب»؛ تستبعد الحسابات بلا دولة متاحة من التصدير، ولا تُحذف من قاعدة البيانات. لا تُستنتج حالة الإيقاف من غياب النتائج.')
+
+if page == '🛡️ الأمان والمراقبة':
+    st.markdown('## الأمان وصحة التشغيل')
+    st.caption('هذه الفحوص محلية، لا تتصل بـRapidAPI ولا تعرض مفاتيح الخدمة أو بيانات المتابعين.')
+    health = db_health(db)
+    a, b, c = st.columns(3)
+    a.metric('سلامة قاعدة البيانات', 'سليمة' if health.get('ok') else 'تحتاج فحصًا')
+    b.metric('المهام', str(health.get('counts', {}).get('jobs') or 0))
+    c.metric('السجلات', str(health.get('counts', {}).get('followers') or 0))
+    if not health.get('ok'):
+        st.error('تعذّر تأكيد سلامة قاعدة البيانات. راجع سجلات الخادم قبل متابعة المعالجة.')
+    else:
+        st.success('اجتاز فحص SQLite السريع.')
+    with st.expander('حالة المجموعات والمتابعة', expanded=True):
+        if health.get('groups'):
+            st.dataframe(pd.DataFrame(health['groups']), use_container_width=True, hide_index=True)
+        else:
+            st.caption('لا توجد مجموعات مسجلة، أو لم تُنشأ جداولها بعد.')
+        st.caption('للتشخيص التفصيلي، راجع سجل الخادم الخاص أو سجل الدفعات؛ لا تنسخ المفاتيح أو الاستجابات الخام.')
+    with st.expander('فحص الإعدادات الأمنية', expanded=True):
+        for label, passed, guidance in security_flags(password_set=bool(secret('ADMIN_PASSWORD')),
+                api_key_set=bool(rapid_key), database_path=db_path,
+                external_worker=external_worker):
+            st.write(('✅ ' if passed else '⚠️ ') + label + ' — ' + ('مضبوط مبدئيًا' if passed else guidance))
+        st.caption('هذا فحص إعدادات أولي، وليس تدقيقًا أمنيًا أو اختبار اختراق.')
+    st.markdown('### نسخة احتياطية من قاعدة البيانات')
+    st.warning('النسخة تحتوي معرّفات وبيانات حسابات؛ احفظها في مكان خاص ومشفّر. التخزين المحلي في Streamlit Cloud غير دائم.')
+    if st.button('إنشاء نسخة احتياطية الآن', type='primary', key='make_ops_backup'):
+        try:
+            data = backup_bytes(db)
+            st.session_state['ops_backup_data'] = data
+            st.session_state['ops_backup_name'] = backup_filename()
+            st.success('تم إنشاء نسخة متسقة والتحقق من سلامتها.')
+        except Exception:
+            st.error('تعذر إنشاء النسخة الاحتياطية. راجع المساحة وصلاحيات التخزين وسجلات الخادم.')
+    if st.session_state.get('ops_backup_data'):
+        st.download_button('تنزيل النسخة الاحتياطية', data=st.session_state['ops_backup_data'],
+                file_name=st.session_state['ops_backup_name'], mime='application/octet-stream',
+                key='ops_download_backup', use_container_width=True)
+        if st.button('حذف النسخة من الذاكرة المؤقتة', key='clear_ops_backup'):
+            st.session_state.pop('ops_backup_data', None)
+            st.session_state.pop('ops_backup_name', None)
+            st.rerun()
+    st.caption('الاستعادة متاحة عبر restore_backup.py خارج الموقع، بعد إيقاف جميع المهام، إلى مسار جديد فقط؛ لتجنّب استبدال قاعدة نشطة.')
 
 if page == '⚙️ دليل المنصات':
     st.subheader('حالة الاتصال بحسب المنصة')
