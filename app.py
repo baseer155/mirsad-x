@@ -238,8 +238,10 @@ if page == '🔎 سحب متابعي X':
                         gid=create_group(db,multi_name,verified,goal=per_target_goal,page_cap=per_target_pages,
                            page_size=multi_page_size,pages_per_tick=pages_tick,about_per_tick=about_tick,
                            about_enabled=about_enabled)
+                        # One deliberate submit starts the group; avoid a second manual click.
+                        resume_group(db,gid)
                         st.session_state['selected_group']=gid
-                        st.success(f'أُنشئت المجموعة #{gid} وفيها {len(items)} حسابات مستقلة. شغّل المجموعة من الأسفل.')
+                        st.success(f'أُنشئت المجموعة #{gid} وفيها {len(items)} حسابات. بدأ السحب والإثراء تلقائيًا.')
                         st.rerun()
                     except Exception as exc:
                         st.error(f'لم يتم إنشاء المجموعة: {type(exc).__name__}')
@@ -291,54 +293,73 @@ if page == '🔎 سحب متابعي X':
                 file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key=f'group_overlap_{group_id}',use_container_width=True)
     
-            running_key=f'multi_running_{group_id}'
+            # The persisted group status is the source of truth. Streamlit session
+            # state is transient and must never gate an already-running group.
+            is_running = group['status']=='قيد التشغيل'
             col_start,col_stop=st.columns(2)
-            if col_start.button('▶ تشغيل / استئناف جميع الحسابات',key=f'multi_start_{group_id}',
-                      disabled=not bool(rapid_key and rapid_path) or all(r['state']=='مكتمل' for r in gr)):
+            if col_start.button('▶ بدء / استكمال المجموعة' if not is_running else '✓ السحب التلقائي يعمل',
+                      key=f'multi_start_{group_id}', disabled=is_running or
+                      not bool(rapid_key and rapid_path) or all(r['state']=='مكتمل' for r in gr)):
                 resume_group(db,group_id)
-                st.session_state[running_key]=True
                 st.rerun()
-            if col_stop.button('⏸ إيقاف المجموعة وحفظ التقدم',key=f'multi_stop_{group_id}'):
-                st.session_state[running_key]=False
+            if col_stop.button('⏸ إيقاف المجموعة وحفظ التقدم',key=f'multi_stop_{group_id}',disabled=not is_running):
                 set_group_status(db,group_id,'متوقف')
                 st.rerun()
+            if is_running and not external_worker:
+                st.caption('التشغيل مستمر تلقائيًا ما دامت هذه الصفحة وجلسة Streamlit فعالتين؛ لا تضغط تشغيل بعد كل دفعة.')
+            elif is_running and external_worker:
+                st.caption('تُنفذ المهام بواسطة العامل الخارجي؛ يمكنك متابعة النتائج هنا.')
+            elif not group_quality['approved']:
+                failed=[r for r in gr if r['state'] in ('متوقف','خطأ')]
+                if failed:
+                    st.warning('توقفت بعض الحسابات. راجع الأسباب في الجدول قبل اختيار «بدء / استكمال المجموعة».')
             @st.fragment(run_every='2s')
-            def multi_group_panel(gid,session_key):
+            def multi_group_panel(gid):
+                # Connect afresh on every fragment tick to avoid cross-thread SQLite errors.
                 with closing(connect(db_path)) as _fragment_db:
-                    return _multi_group_panel_inner(_fragment_db,gid,session_key)
-    
-            def _multi_group_panel_inner(db,gid,session_key):
-                g=get_group(db,gid)
-                rs=group_members(db,gid)
-                st.caption(f"الحالة: {g['status']} | حسابات قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
-                if not st.session_state.get(session_key,False):
-                    st.info('المجموعة غير نشطة في جلسة المتصفح الحالية. اضغط تشغيل لاستكمالها.')
-                    return
-                if g['status']!='قيد التشغيل':
-                    st.session_state[session_key]=False
-                    if inspect_group(db,gid)['approved']:
-                        st.success('✅ تم الانتهاء من المهمة')
+                    g=get_group(_fragment_db,gid)
+                    if g is None:
+                        st.error('المجموعة غير موجودة في قاعدة البيانات الحالية.')
+                        return
+                    rs=group_members(_fragment_db,gid)
+                    st.caption(f"الحالة: {g['status']} | قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
+                    # Live, fragment-scoped progress. The table above is a static
+                    # snapshot until the next full page refresh.
+                    fresh_count=sum(int(x['unique_count']) for x in rs)
+                    finished_count=sum(x['state']=='مكتمل' for x in rs)
+                    st.caption(f'متابعون مسحوبون حتى الآن: {fresh_count:,} | مهام مكتملة: {finished_count} من {len(rs)}')
+                    if g['status']!='قيد التشغيل':
+                        if inspect_group(_fragment_db,gid)['approved']:
+                            st.success('✅ تم الانتهاء من المهمة')
+                        else:
+                            st.info('المجموعة متوقفة أو تنتظر الاستئناف. لا توجد طلبات API جارية.')
+                        return
+                    if external_worker:
+                        st.info('العامل الخارجي مسؤول عن التنفيذ؛ لا تُجرى طلبات من لوحة المتصفح.')
+                        return
+                    try:
+                        answer=group_tick(_fragment_db,gid,rapid_key=rapid_key,followers_path=rapid_path,
+                                          about_path=rapid_about_path,profiles_path=rapid_profiles_path)
+                    except Exception as exc:
+                        # Stop on unexpected local errors instead of silently requiring clicks.
+                        set_group_status(_fragment_db,gid,'متوقف')
+                        st.error(f'توقف التشغيل بسبب خطأ محلي ({type(exc).__name__}). راجع سجل التطبيق.')
+                        return
+                    if answer.get('target'):
+                        st.caption(f"آخر حساب: @{answer['target']} | متابعون جدد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)}")
+                    if answer.get('state')=='rate_limited':
+                        wait=speed_metrics(_fragment_db,gid)['wait_seconds']
+                        st.info(f'انتظار حد طلبات RapidAPI: نحو {wait} ثانية. ستُستأنف المعالجة تلقائيًا.')
+                    elif answer.get('state')=='finished':
+                        if inspect_group(_fragment_db,gid)['approved']:
+                            st.success('✅ تم الانتهاء من المهمة')
+                        else:
+                            st.warning('انتهت المهام المتاحة لكن بعضها لم يجتز شروط الاعتماد. راجع ملاحظات الحسابات.')
+                    elif answer.get('state') in ('error','paused'):
+                        st.warning('توقف هذا الحساب: '+str(answer.get('message',''))[:180]+' — ستُعالج الحسابات الأخرى إذا كانت جاهزة.')
                     else:
-                        st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
-                    return
-                if external_worker:
-                    st.info('التشغيل يتم بواسطة عامل المهام الخارجي؛ تُعرض النتائج عند تحديث الصفحة.')
-                    return
-                with st.spinner('جاري السحب والتحقق من About للحساب التالي بالتناوب...'):
-                    answer=group_tick(db,gid,rapid_key=rapid_key,followers_path=rapid_path,about_path=rapid_about_path,profiles_path=rapid_profiles_path)
-                if answer.get('target'):
-                    st.caption(f"آخر حساب: @{answer['target']} | جديد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)} | الحالة: {answer['state']}")
-                if answer.get('state')=='finished':
-                    st.session_state[session_key]=False
-                    latest=get_group(db,gid)
-                    latest_members=group_members(db,gid)
-                    if inspect_group(db,gid)['approved']:
-                        st.success('✅ تم الانتهاء من المهمة')
-                    else:
-                        st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
-                else:
-                    st.caption('النتائج والـCursor محفوظة بعد كل دفعة؛ يستمر الحساب التالي في دورة التحديث المقبلة.')
-            multi_group_panel(group_id,running_key)
+                        st.caption('يُحفظ التقدم تلقائيًا بعد كل دفعة، وتبدأ الدفعة التالية دون تدخل.')
+            multi_group_panel(group_id)
     else:
         st.subheader('سحب حساب واحد')
         st.caption('أنشئ المهمة باستخدام اليوزر والمعرف الرقمي ثم تابع تقدمها.')
