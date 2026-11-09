@@ -15,7 +15,7 @@ def clean_cell(value):
     if value.lstrip().startswith(('=','+','-','@','\t','\r','\n')):return "'"+value
     return value
 
-def make_excel(rows,events,job):
+def make_excel(rows,events,job,audit=None):
     rows=exportable_rows(rows)
     output=io.BytesIO()
     book=xlsxwriter.Workbook(output,{'in_memory':True,'strings_to_formulas':False,'strings_to_urls':False})
@@ -83,11 +83,19 @@ def make_excel(rows,events,job):
     ev.write_string(timeline_row+2,1,'غير مسجلة منفصلًا في النسخة الحالية',plain)
     ev.write_string(timeline_row+3,0,'متوسط مدة طلب سحب صفحة',title)
     ev.write_string(timeline_row+3,1,fmt_duration(metrics['seconds_per_page']),plain)
+    if audit is not None:
+        from report_audit import audit_lines
+        aw=sheet('التحقق من التقرير',['المؤشر','القيمة'],[43,100])
+        for i,(label,value) in enumerate(audit_lines(audit),1):
+            aw.write_string(i,0,str(label),plain)
+            aw.write_string(i,1,clean_cell(value),plain)
+        aw.write_string(len(audit_lines(audit))+3,0,'توضيح',title)
+        aw.write_string(len(audit_lines(audit))+3,1,'حالة الاعتماد تمثل اكتمال المعالجة وفق السجلات المتاحة، وليست ضمانًا لصحة جميع بيانات المصدر.',plain)
     book.close();return output.getvalue()
 
 
 # Cross-target overlap for a group. Country must originate from About only.
-def make_group_excel(db, group_id):
+def make_group_excel(db, group_id, audit=None):
     # Shared user matched by UID; only About-confirmed country included.
     from itertools import combinations
     group = db.execute('SELECT * FROM target_groups WHERE id=?',(int(group_id),)).fetchone()
@@ -175,5 +183,19 @@ def make_group_excel(db, group_id):
             'values':['تداخل الحسابات',1,2,min(idx,12),2]})
         chart.set_legend({'none':True});chart.set_title({'name':'التداخل بين الحسابات المستهدفة'})
         chart.set_size({'width':690,'height':360});cross.insert_chart('H2',chart)
+    if audit is not None:
+        from report_audit import audit_lines
+        audit_sheet=sheet('التحقق من التقرير',['المؤشر','القيمة'],[48,95])
+        audit_sheet.write_string(1,0,'حالة المجموعة',fmt_txt)
+        audit_sheet.write_string(1,1,str(audit['status']),fmt_txt)
+        for idx,(label,value) in enumerate(audit_lines(audit),2):
+            audit_sheet.write_string(idx,0,str(label),fmt_txt)
+            audit_sheet.write_string(idx,1,clean_cell(value),fmt_txt)
+        member_sheet=sheet('اعتماد الحسابات المستهدفة',['الحساب المستهدف','المهمة','حالة التقرير','المسحوب','المؤهل','المستبعد','فحوص About الناجحة','معلقة','السبب'],[32,16,23,18,18,18,25,15,78])
+        for i,(item,job) in enumerate(zip(audit['members'],members),1):
+            values=['@'+str(job['target']).lstrip('@'),str(item['scope_id']),item['status'],item['total_followers'],item['exported'],item['excluded_without_country'],item['about_done'],item['about_pending'],item['reason']]
+            for j,value in enumerate(values):
+                if j in (3,4,5,6,7):member_sheet.write_number(i,j,int(value),fmt_n)
+                else:member_sheet.write_string(i,j,clean_cell(value),fmt_txt)
     wb.close()
     return out.getvalue()
