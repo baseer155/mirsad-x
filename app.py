@@ -23,6 +23,7 @@ from multi_accounts import (parse_targets, resolve_targets, create_group, get_gr
                             resume as resume_group, set_status as set_group_status, tick as group_tick)
 from performance import configure as configure_speed, metrics as speed_metrics
 from readiness import inspect_job, inspect_group
+from report_audit import manifest_for_job, manifest_for_group
 from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
 st.set_page_config(page_title='مِرصاد | ذكاء المنصات الاجتماعية',page_icon='🛰️',layout='wide',initial_sidebar_state='expanded')
@@ -289,7 +290,9 @@ if page == '🔎 سحب متابعي X':
                     configure_speed(db,group_id,rpm=rate,page_size=size)
                     st.success('تم تحديث سرعة المجموعة')
                 st.caption(f"طلبات متاحة في الدقيقة الحالية: {speed_data['remaining_window']} | انتظار: {speed_data['wait_seconds']} ثانية")
-            st.download_button(('⬇️ Excel — نتائج المجموعة النهائية' if group_quality['approved'] else '⬇️ Excel — نتائج المجموعة الأولية'),data=make_group_excel(db,group_id),
+            group_manifest=manifest_for_group(db,group_id)
+            st.caption(f"حالة التحقق: {group_manifest['status']} | المسحوب: {group_manifest['total_followers']:,} | المؤهل: {group_manifest['exported']:,} | مرجع: {group_manifest['audit_id']}")
+            st.download_button(('⬇️ Excel — نتائج المجموعة النهائية' if group_quality['approved'] else '⬇️ Excel — نتائج المجموعة الأولية'),data=make_group_excel(db,group_id,audit=group_manifest),
                 file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key=f'group_overlap_{group_id}',use_container_width=True)
     
@@ -717,8 +720,10 @@ if page == '📊 التحليلات والتقارير':
                 st.warning('تقرير أولي غير معتمد: '+readiness['reason'])
             st.markdown('#### 📦 تنزيل التقارير المهنية')
             eligible_rows = exportable_rows(rows)
+            audit=manifest_for_job(db,selected)
             excluded_count = len(rows) - len(eligible_rows)
             st.caption(f'سيُدرج في التقرير النهائي {len(eligible_rows):,} حسابًا محدد الدولة، مع استبعاد {excluded_count:,} حسابًا بلا دولة متاحة. تبقى السجلات المستبعدة محفوظة داخل النظام.')
+            st.caption(f"حالة التحقق: {audit['status']} | مرجع: {audit['audit_id']} | وقت التحقق: {audit['checked_at']}")
             st.caption('Excel للبيانات التفصيلية، Word للتقرير الإداري القابل للتحرير، وPowerPoint للعرض التنفيذي. جميع الملفات تعتمد السجلات المحفوظة وقت التصدير.')
             display_name=st.text_input('اسم الحساب المستهدف ليظهر في اسم الملف (اختياري)',value=job['target'],key=f'report_display_name_{selected}')
             output_username=job['target']
@@ -730,11 +735,11 @@ if page == '📊 التحليلات والتقارير':
             st.caption('زمن طلبات السحب لا يشمل فحوص About. لا تتوفر مدة مستقلة دقيقة للإثراء في السجلات القديمة؛ تعكس مدة المهمة الفواصل والتوقف أيضًا.')
             ex_col, word_col, ppt_col = st.columns(3)
             with ex_col:
-                st.download_button(('⬇️ تقرير Excel النهائي' if readiness['approved'] else '⬇️ تقرير Excel أولي'),data=make_excel(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'xlsx'),mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
+                st.download_button(('⬇️ تقرير Excel النهائي' if readiness['approved'] else '⬇️ تقرير Excel أولي'),data=make_excel(eligible_rows,events,job,audit=audit),file_name=safe_report_name(display_name,output_username,'xlsx'),mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',type='primary',use_container_width=True,key=f'xlsx_{selected}')
             with word_col:
-                st.download_button(('⬇️ تقرير Word النهائي' if readiness['approved'] else '⬇️ تقرير Word أولي'),data=make_word(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'docx'),mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
+                st.download_button(('⬇️ تقرير Word النهائي' if readiness['approved'] else '⬇️ تقرير Word أولي'),data=make_word(eligible_rows,events,job,audit=audit),file_name=safe_report_name(display_name,output_username,'docx'),mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document',use_container_width=True,key=f'docx_{selected}')
             with ppt_col:
-                st.download_button(('⬇️ عرض PowerPoint النهائي' if readiness['approved'] else '⬇️ عرض PowerPoint أولي'),data=make_powerpoint(eligible_rows,events,job),file_name=safe_report_name(display_name,output_username,'pptx'),mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
+                st.download_button(('⬇️ عرض PowerPoint النهائي' if readiness['approved'] else '⬇️ عرض PowerPoint أولي'),data=make_powerpoint(eligible_rows,events,job,audit=audit),file_name=safe_report_name(display_name,output_username,'pptx'),mime='application/vnd.openxmlformats-officedocument.presentationml.presentation',use_container_width=True,key=f'pptx_{selected}')
         if events:
             st.write('#### سجل الوقت والتقدم')
             st.dataframe(pd.DataFrame(events),hide_index=True,use_container_width=True)
