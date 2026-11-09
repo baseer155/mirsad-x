@@ -192,6 +192,25 @@ def _walk_user_profiles(payload, max_nodes=100000):
                 stack.append(v)
     return list(found.values())
 
+def lookup_profile_by_username(username, key, path='/user'):
+    """Resolve a target handle with twitter241's /user?username= endpoint.
+
+    A successful lookup MUST return an explicit numeric ID and matching handle;
+    never infer an ID from a URL, and never silently use another API provider.
+    This operation is billable and must only run after user submission.
+    """
+    from core import username_from_input
+    handle=username_from_input(username)
+    payload=call(path,key,{'username':handle})
+    profiles=_walk_user_profiles(payload, max_nodes=5000)
+    exact=[u for u in profiles if str(u.get('username','')).lower()==handle.lower()]
+    if not exact:
+        raise RapidAPIError(f'لم يعُد المصدر معرفًا رقميًا مطابقًا للحساب @{handle}')
+    profile=exact[0]
+    if not str(profile.get('id','')).isdigit():
+        raise RapidAPIError('تعذّر قراءة المعرف الرقمي الدائم')
+    return profile
+
 def lookup_profiles_by_ids(ids, key, path='/get-users'):
     """Lookup public profiles by numeric user IDs using the provider's own endpoint.
 
