@@ -58,6 +58,40 @@ div[data-testid="stAlert"] {border-radius:11px;}
 [data-testid="stMain"] h2,[data-testid="stMain"] h3 {letter-spacing:0;line-height:1.5;}
 
 @media(max-width:800px){[data-testid="stMainBlockContainer"]{padding:1rem}.hero{padding:17px}.hero h1{font-size:1.55rem}}
+
+/* Phase 3 — simplified, right-to-left operating interface */
+:root{--mirsad-ink:#163547;--mirsad-teal:#087e79;--mirsad-edge:#e4edf0;--mirsad-bg:#f8fafb}
+[data-testid="stApp"],[data-testid="stMain"]{background:var(--mirsad-bg)}
+[data-testid="stMainBlockContainer"]{max-width:1340px!important;padding:1.25rem 2.25rem 4rem!important}
+[data-testid="stSidebar"]{background:#fff!important}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.55rem}
+[data-testid="stSidebar"] [role="radiogroup"] label{box-shadow:none!important;border:0!important;border-right:3px solid transparent!important;background:transparent!important;border-radius:7px!important;padding:10px 12px!important}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:#eaf7f4!important;border-right:3px solid var(--mirsad-teal)!important;color:#065f5b!important}
+.hero{background:#fff!important;color:var(--mirsad-ink)!important;border:1px solid var(--mirsad-edge);box-shadow:none!important;padding:18px 24px!important;border-radius:15px!important;margin-bottom:17px!important}
+.hero h1{font-size:1.75rem!important;color:var(--mirsad-ink)!important}
+.hero p{color:#667985!important;font-size:.95rem!important;margin-top:3px!important}
+.hero-brow{color:var(--mirsad-teal);font-size:.75rem;font-weight:800;letter-spacing:.02em;margin-bottom:2px}
+.step-strip{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 20px}
+.step-strip span{background:#fff;border:1px solid #dfe9ed;color:#496777;padding:8px 14px;border-radius:999px;font-size:.88rem;font-weight:700}
+[data-testid="stMain"] [role="radiogroup"]{justify-content:flex-start;gap:12px;direction:rtl}
+[data-testid="stMain"] [role="radiogroup"] label{background:#fff;border:1px solid #e0e9ed;border-radius:12px;padding:8px 18px}
+[data-testid="stMain"] [role="radiogroup"] label:has(input:checked){border-color:#0d8b83;background:#eaf7f4}
+[data-testid="stMetric"]{background:#fff!important;border:1px solid var(--mirsad-edge)!important;border-radius:14px!important;padding:16px!important;min-width:0!important;overflow:visible!important}
+[data-testid="stMetricLabel"]{color:#58717d!important}
+[data-testid="stMetricValue"]{font-size:clamp(1.25rem,2vw,2rem)!important;white-space:normal!important;overflow-wrap:anywhere!important;line-height:1.28!important}
+[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stExpander"]){border-radius:14px}
+[data-testid="stExpander"]{background:#fff;border:1px solid var(--mirsad-edge);border-radius:14px!important;overflow:hidden}
+[data-testid="stExpander"] summary{font-weight:700;color:var(--mirsad-ink)}
+[data-testid="stButton"] button,[data-testid="stDownloadButton"] button,[data-testid="stFormSubmitButton"] button{border-radius:10px!important;min-height:42px!important}
+[data-testid="stButton"] button[kind="primary"],[data-testid="stFormSubmitButton"] button[kind="primary"]{background:#087e79!important;border-color:#087e79!important;color:#fff!important}
+[data-testid="stMain"] h2{font-size:1.5rem!important;color:#193d4d;line-height:1.5!important}
+[data-testid="stMain"] h3{font-size:1.15rem!important;color:#193d4d}
+[data-testid="stMain"] [data-testid="stForm"]{border:1px solid var(--mirsad-edge);background:#fff;border-radius:14px;padding:16px}
+[data-testid="stMain"] label{direction:rtl!important;text-align:right!important}
+[data-testid="stMain"] input[type="text"],[data-testid="stMain"] textarea{border-radius:9px!important}
+[data-testid="stMain"] textarea{unicode-bidi:plaintext;direction:ltr!important;text-align:left!important}
+[data-testid="stDataFrame"]{background:white;border-radius:12px;overflow:hidden}
+@media(max-width:820px){[data-testid="stMainBlockContainer"]{padding:1rem .85rem 3rem!important}.hero{padding:15px!important}.step-strip span{padding:6px 9px;font-size:.78rem}[data-testid="stMetric"]{padding:10px!important}}
 </style>""",unsafe_allow_html=True)
 
 def secret(name):
@@ -78,8 +112,8 @@ def signed_in():
         else:st.sidebar.error('كلمة المرور غير صحيحة')
     return False
 
-st.markdown('<div class="hero"><h1>🛰️ مِرصاد</h1><p>ذكاء المنصات الاجتماعية | رصد، تحليل، تقارير</p></div>',unsafe_allow_html=True)
-st.sidebar.title('🛰️ مِرصاد')
+st.markdown('<div class="hero"><div class="hero-brow">لوحة العمليات الرقمية</div><h1>مِرصاد</h1><p>إدارة مهام السحب والتحليل والتقارير</p></div>',unsafe_allow_html=True)
+st.sidebar.title('مِرصاد | لوحة التحكم')
 admin=signed_in()
 if not admin:
     st.subheader('المرصد الرقمي متعدد المنصات')
@@ -94,7 +128,7 @@ if not admin:
     st.stop()
 
 with st.sidebar:
-    st.success('لوحة المسؤول مفتوحة')
+    st.caption('جلسة المسؤول نشطة')
     if st.button('تسجيل الخروج',use_container_width=True):
         st.session_state['authenticated']=False;st.rerun()
 
@@ -143,10 +177,10 @@ def _read_single_target_count(conn, job_id, target_uid, api_key, profiles_path, 
 
 # قائمة رئيسية عمودية على يمين الموقع — كل قسم مستقل
 with st.sidebar:
-    st.markdown('### 🧭 القائمة الرئيسية')
+    st.markdown('### القائمة الرئيسية')
     page = st.radio('الأقسام', ['🏠 الرئيسية', '🔎 سحب متابعي X', '📥 استيراد البيانات', '📊 التحليلات والتقارير', '⚙️ دليل المنصات'],
         label_visibility='collapsed', key='mirsad_section')
-    st.caption('الإعدادات المتقدمة متاحة ضمن صفحات المهام')
+    
 
 if page == '🏠 الرئيسية':
     st.markdown('<h2 class="section-title">لوحة التحكم الرئيسية</h2>', unsafe_allow_html=True)
@@ -165,342 +199,347 @@ if page == '🏠 الرئيسية':
     st.caption('تقدم السحب الفعلي يعتمد على الصفحات التي يعيدها المزود. بلوغ نهاية الصفحات لا يعني الوصول إلى العدد المستهدف بالضرورة.')
 
 if page == '🔎 سحب متابعي X':
-    st.markdown('### 🗂️ السحب الجماعي — عدة حسابات بمهمة واحدة')
-    st.caption('أدخل الحسابات، ثم شغّل المجموعة وتابع تقدمها من مكان واحد.')
-    with st.expander('➕ إنشاء مجموعة جديدة', expanded=False):
-        with st.form('multi_target_create', clear_on_submit=False):
-            multi_name=st.text_input('اسم المجموعة', value='مجموعة متابعة X')
-            raw_targets=st.text_area('حساب واحد في كل سطر — اليوزر أو الرابط فقط',
-                placeholder='@account_one\nhttps://x.com/account_two\n@account_three',height=145)
-            st.caption('يقرأ النظام المعرف الدائم وعدد المتابعين تلقائيًا، ثم يتحقق من الحسابات قبل إنشاء المهمة. قد تُحتسب طلبات تحقق مدفوعة.')
-            st.markdown('**إعدادات السحب**')
-            aa,bb,cc=st.columns(3)
-            per_target_goal=1000000
-            aa.info('العدد المستهدف يُقرأ من RapidAPI تلقائيًا')
-            per_target_pages=bb.number_input('سقف الصفحات لكل حساب',min_value=1,max_value=100000,value=3000,step=250)
-            multi_page_size=cc.number_input('متابعون مطلوبون لكل طلب',min_value=1,max_value=200,value=20,step=10)
-            st.caption('إعدادات التشغيل المتقدمة: اترك القيم الافتراضية ما لم تستدعِ الباقة غير ذلك.')
-            dd,ee,ff=st.columns(3)
-            pages_tick=dd.number_input('صفحات في دورة الحساب',min_value=1,max_value=5,value=1)
-            about_tick=ee.number_input('فحوص About في الدورة',min_value=1,max_value=50,value=10)
-            ff.markdown('**إثراء About آلي**')
-            ff.caption('تُضاف حسابات جديدة إلى طابور الفحص مع كل دفعة')
-            about_enabled=st.checkbox('فحص «حول الحساب» تلقائيًا للمتابعين',value=True)
-            st.caption('قد يُحتسب طلب API لكل حساب متابع عند فحص About؛ راجع رسوم وحدود اشتراكك.')
-            submitted=st.form_submit_button('إنشاء مجموعة الحسابات',type='primary',disabled=not bool(rapid_key and rapid_path))
-        if submitted:
-            items,problems=parse_targets(raw_targets)
-            if problems:
-                st.error('لم تُنشأ المجموعة؛ صحّح الإدخال:\n'+'\n'.join('• '+err for err in problems[:15]))
-            else:
-                try:
-                    verified,lookup_errors=resolve_targets(items,rapid_key,secret('RAPIDAPI_USER_PATH') or '/user')
-                    if lookup_errors:
-                        st.error('تعذر التحقق من جميع الحسابات؛ لم تُنشأ المجموعة: ' + ' | '.join(lookup_errors[:12]))
-                        st.stop()
-                    gid=create_group(db,multi_name,verified,goal=per_target_goal,page_cap=per_target_pages,
-                       page_size=multi_page_size,pages_per_tick=pages_tick,about_per_tick=about_tick,
-                       about_enabled=about_enabled)
-                    st.session_state['selected_group']=gid
-                    st.success(f'أُنشئت المجموعة #{gid} وفيها {len(items)} حسابات مستقلة. شغّل المجموعة من الأسفل.')
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f'لم يتم إنشاء المجموعة: {type(exc).__name__}')
-    groups=get_groups(db)
-    if groups:
-        names={g['id']:f"#{g['id']} | {g['name']} | {g['status']}" for g in groups}
-        group_id=st.selectbox('📁 إدارة مجموعة الحسابات',list(names),format_func=lambda k:names[k],
-                  index=next((i for i,k in enumerate(names) if k==st.session_state.get('selected_group')),0),key='multi_group_selected')
-        group=get_group(db,group_id)
-        gr=group_members(db,group_id)
-        group_quality=inspect_group(db,group_id)
-        if group_quality['approved']:
-            st.success('✅ تم الانتهاء من المهمة — نتائج المجموعة مؤهلة')
-        else:
-            st.info('حالة اعتماد المجموعة: '+group_quality['reason'])
-        total_unique=sum(r['unique_count'] for r in gr)
-        total_country=sum(r['with_country'] for r in gr)
-        gm1,gm2,gm3,gm4=st.columns(4)
-        gm1.metric('الحسابات المستهدفة',len(gr))
-        gm2.metric('المتابعون المسحوبون',f'{total_unique:,}')
-        gm3.metric('دولة من About',f'{total_country:,}')
-        gm4.metric('المهام المكتملة',f"{sum(r['state']=='مكتمل' for r in gr):,} / {len(gr)}")
-        known_goal=sum(min(group['goal_per_target'], r['follower_total']) for r in gr if r['follower_total'] is not None)
-        unknown=sum(r['follower_total'] is None for r in gr)
-        if not unknown and known_goal>0:
-            st.progress(min(1.,total_unique/known_goal),text='التقدم بحسب عدد المتابعين المؤكد من المصدر')
-        else:
-            st.caption('نسبة الإنجاز الإجمالية لا تُحسب قبل معرفة أعداد جميع الحسابات؛ العدد المسحوب يظهر مباشرة.')
-        dataframe=pd.DataFrame([{'الحساب':'@'+r['target'],'المعرف':r['target_uid'],
-                   'المتابعون':r['unique_count'],'العدد المعلن لدى المصدر':r['follower_total'] if r['follower_total'] is not None else 'غير متاح', 'دولة من About':r['with_country'],
-                   'الصفحات':r['pages'],'حالة المجموعة':r['state'],
-                   'الوقت (ث)':round(r['elapsed_seconds'],1),'ملاحظة':r['message'] or ''} for r in gr])
-        st.dataframe(dataframe,hide_index=True,use_container_width=True)
-        done_about=db.execute('''SELECT COUNT(*) FROM about_attempts a
-            JOIN target_group_members m ON m.job_id=a.job_id
-            WHERE m.group_id=? AND a.state='done' ''',(group_id,)).fetchone()[0]
-        st.progress(min(1.,done_about/max(1,total_unique)),
-            text=f'إثراء About: {done_about:,} / {total_unique:,} متابعًا تم فحصه بنجاح')
-        st.caption('يستمر فحص About تلقائيًا مع اكتشاف المتابعين؛ انتهاء السحب وحده لا يعني اعتماد النتائج.')
-        with st.expander('⚡ ضبط سرعة المجموعة',expanded=False):
-            speed_data=speed_metrics(db,group_id)
-            rate=st.number_input('سقف طلبات RapidAPI في الدقيقة',min_value=1,max_value=120,value=int(speed_data['rpm_limit']),key=f'rpm_{group_id}')
-            size=st.number_input('عدد المتابعين المطلوب في الصفحة',min_value=1,max_value=200,value=100,key=f'size_{group_id}')
-            if st.button('حفظ سرعة المجموعة',key=f'speed_save_{group_id}'):
-                configure_speed(db,group_id,rpm=rate,page_size=size)
-                st.success('تم تحديث سرعة المجموعة')
-            st.caption(f"طلبات متاحة في الدقيقة الحالية: {speed_data['remaining_window']} | انتظار: {speed_data['wait_seconds']} ثانية")
-        st.download_button(('⬇️ Excel — نتائج المجموعة النهائية' if group_quality['approved'] else '⬇️ Excel — نتائج المجموعة الأولية'),data=make_group_excel(db,group_id),
-            file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            key=f'group_overlap_{group_id}',use_container_width=True)
-        st.caption('تُقارن الحسابات المشتركة بواسطة المعرّف الدائم؛ يحتفظ كل حساب مستهدف بمتابعيه المستقلين.')
-        running_key=f'multi_running_{group_id}'
-        col_start,col_stop=st.columns(2)
-        if col_start.button('▶ تشغيل / استئناف جميع الحسابات',key=f'multi_start_{group_id}',
-                  disabled=not bool(rapid_key and rapid_path) or all(r['state']=='مكتمل' for r in gr)):
-            resume_group(db,group_id)
-            st.session_state[running_key]=True
-            st.rerun()
-        if col_stop.button('⏸ إيقاف المجموعة وحفظ التقدم',key=f'multi_stop_{group_id}'):
-            st.session_state[running_key]=False
-            set_group_status(db,group_id,'متوقف')
-            st.rerun()
-        @st.fragment(run_every='2s')
-        def multi_group_panel(gid,session_key):
-            with closing(connect(db_path)) as _fragment_db:
-                return _multi_group_panel_inner(_fragment_db,gid,session_key)
-
-        def _multi_group_panel_inner(db,gid,session_key):
-            g=get_group(db,gid)
-            rs=group_members(db,gid)
-            st.caption(f"الحالة: {g['status']} | حسابات قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
-            if not st.session_state.get(session_key,False):
-                st.info('المجموعة غير نشطة في جلسة المتصفح الحالية. اضغط تشغيل لاستكمالها.')
-                return
-            if g['status']!='قيد التشغيل':
-                st.session_state[session_key]=False
-                if inspect_group(db,gid)['approved']:
-                    st.success('✅ تم الانتهاء من المهمة')
+    st.markdown('## إدارة سحب المتابعين')
+    st.caption('أنشئ مهمة أو تابع مهمة محفوظة، ثم راجع النتائج في صفحة التقارير.')
+    st.markdown('<div class="step-strip"><span>١ · إنشاء المهمة</span><span>٢ · السحب والإثراء</span><span>٣ · اعتماد التقرير</span></div>',unsafe_allow_html=True)
+    mode=st.radio('نوع المهمة', ['مجموعة حسابات','حساب واحد'], horizontal=True, key='v17_phase3_mode')
+    if mode == 'مجموعة حسابات':
+        with st.expander('إنشاء مجموعة جديدة', expanded=True):
+            with st.form('multi_target_create', clear_on_submit=False):
+                multi_name=st.text_input('اسم المجموعة', value='مجموعة متابعة X')
+                raw_targets=st.text_area('حساب واحد في كل سطر — اليوزر أو الرابط فقط',
+                    placeholder='@account_one\nhttps://x.com/account_two\n@account_three',height=145)
+                st.caption('يقرأ النظام المعرف الدائم وعدد المتابعين تلقائيًا، ثم يتحقق من الحسابات قبل إنشاء المهمة. قد تُحتسب طلبات تحقق مدفوعة.')
+                with st.expander("إعدادات السحب والإثراء المتقدمة", expanded=False):
+                    aa,bb,cc=st.columns(3)
+                    per_target_goal=1000000
+                    aa.info('العدد المستهدف يُقرأ من RapidAPI تلقائيًا')
+                    per_target_pages=bb.number_input('سقف الصفحات لكل حساب',min_value=1,max_value=100000,value=3000,step=250)
+                    multi_page_size=cc.number_input('متابعون مطلوبون لكل طلب',min_value=1,max_value=200,value=20,step=10)
+                    st.caption('إعدادات التشغيل المتقدمة: اترك القيم الافتراضية ما لم تستدعِ الباقة غير ذلك.')
+                    dd,ee,ff=st.columns(3)
+                    pages_tick=dd.number_input('صفحات في دورة الحساب',min_value=1,max_value=5,value=1)
+                    about_tick=ee.number_input('فحوص About في الدورة',min_value=1,max_value=50,value=10)
+                    ff.markdown('**إثراء About آلي**')
+                    ff.caption('تُضاف حسابات جديدة إلى طابور الفحص مع كل دفعة')
+                    about_enabled=st.checkbox('فحص «حول الحساب» تلقائيًا للمتابعين',value=True)
+                    st.caption('فحوص About قد تستهلك طلبات إضافية من الاشتراك.')
+                submitted=st.form_submit_button('إنشاء مجموعة الحسابات',type='primary',disabled=not bool(rapid_key and rapid_path))
+            if submitted:
+                items,problems=parse_targets(raw_targets)
+                if problems:
+                    st.error('لم تُنشأ المجموعة؛ صحّح الإدخال:\n'+'\n'.join('• '+err for err in problems[:15]))
                 else:
-                    st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
-                return
-            if external_worker:
-                st.info('التشغيل يتم بواسطة عامل المهام الخارجي؛ تُعرض النتائج عند تحديث الصفحة.')
-                return
-            with st.spinner('جاري السحب والتحقق من About للحساب التالي بالتناوب...'):
-                answer=group_tick(db,gid,rapid_key=rapid_key,followers_path=rapid_path,about_path=rapid_about_path,profiles_path=rapid_profiles_path)
-            if answer.get('target'):
-                st.caption(f"آخر حساب: @{answer['target']} | جديد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)} | الحالة: {answer['state']}")
-            if answer.get('state')=='finished':
-                st.session_state[session_key]=False
-                latest=get_group(db,gid)
-                latest_members=group_members(db,gid)
-                if inspect_group(db,gid)['approved']:
-                    st.success('✅ تم الانتهاء من المهمة')
-                else:
-                    st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
+                    try:
+                        verified,lookup_errors=resolve_targets(items,rapid_key,secret('RAPIDAPI_USER_PATH') or '/user')
+                        if lookup_errors:
+                            st.error('تعذر التحقق من جميع الحسابات؛ لم تُنشأ المجموعة: ' + ' | '.join(lookup_errors[:12]))
+                            st.stop()
+                        gid=create_group(db,multi_name,verified,goal=per_target_goal,page_cap=per_target_pages,
+                           page_size=multi_page_size,pages_per_tick=pages_tick,about_per_tick=about_tick,
+                           about_enabled=about_enabled)
+                        st.session_state['selected_group']=gid
+                        st.success(f'أُنشئت المجموعة #{gid} وفيها {len(items)} حسابات مستقلة. شغّل المجموعة من الأسفل.')
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f'لم يتم إنشاء المجموعة: {type(exc).__name__}')
+        groups=get_groups(db)
+        if groups:
+            names={g['id']:f"#{g['id']} | {g['name']} | {g['status']}" for g in groups}
+            group_id=st.selectbox('📁 إدارة مجموعة الحسابات',list(names),format_func=lambda k:names[k],
+                      index=next((i for i,k in enumerate(names) if k==st.session_state.get('selected_group')),0),key='multi_group_selected')
+            group=get_group(db,group_id)
+            gr=group_members(db,group_id)
+            group_quality=inspect_group(db,group_id)
+            if group_quality['approved']:
+                st.success('✅ تم الانتهاء من المهمة — نتائج المجموعة مؤهلة')
             else:
-                st.caption('النتائج والـCursor محفوظة بعد كل دفعة؛ يستمر الحساب التالي في دورة التحديث المقبلة.')
-        multi_group_panel(group_id,running_key)
-    st.divider()
-    st.subheader('سحب متابعي حساب واحد على X')
-    st.caption('مصدر السحب الحالي: '+api_mode+' | تُحسب الطلبات حسب باقة المزود. يتطلب RapidAPI معرفًا رقميًا دائمًا للحساب.')
-    user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
-    page_limit=st.slider('أقصى صفحات لكل ضغطة',1,20,3)
-    st.caption('يُقرأ إجمالي المتابعين تلقائيًا من بيانات الحساب عند توفره؛ لا تحتاج إلى إدخال العدد. سقف الصفحات يبقى حماية مستقلة لتكلفة API.')
-    # Provider count is resolved after a job exists; safe high cap is a fallback,
-    # not a claim that the account has this many followers.
-    target_limit=1000000
-    if rapid_key and not rapid_path:st.warning('مفتاح RapidAPI محفوظ، لكن يجب إضافة RAPIDAPI_FOLLOWERS_PATH من توثيق المسار الفعلي إلى Secrets.')
-    elif not configured:st.warning('لا يوجد اتصال مكتمل. ضبط مفتاح RapidAPI ومساره، أو X_BEARER_TOKEN، لتفعيل السحب.')
-    if rapid_key:
-        target_uid_input=st.text_input('المعرف الرقمي الدائم للحساب المستهدف (User ID)',placeholder='2455740283')
-        page_count=st.number_input('الحجم المطلوب في كل طلب RapidAPI',min_value=1,max_value=200,value=20,step=10)
-    else:
-        target_uid_input=''
-        page_count=20
-    if st.button('إنشاء مهمة سحب جديدة',type='primary',disabled=not bool(configured and (target_uid_input.strip().isdigit() if rapid_key else user_raw.strip()))):
-        try:
-            target=username_from_input(user_raw) if user_raw.strip() else target_uid_input.strip()
-            if rapid_key:
-                validate_path(rapid_path)
-                if not target_uid_input.strip().isdigit():raise ValueError('أدخل User ID الرقمي للحساب المستهدف.')
-                uid=target_uid_input.strip()
+                st.info('حالة اعتماد المجموعة: '+group_quality['reason'])
+            total_unique=sum(r['unique_count'] for r in gr)
+            total_country=sum(r['with_country'] for r in gr)
+            gm1,gm2,gm3,gm4=st.columns(4)
+            gm1.metric('الحسابات المستهدفة',len(gr))
+            gm2.metric('المتابعون المسحوبون',f'{total_unique:,}')
+            gm3.metric('دولة من About',f'{total_country:,}')
+            gm4.metric('المهام المكتملة',f"{sum(r['state']=='مكتمل' for r in gr):,} / {len(gr)}")
+            known_goal=sum(min(group['goal_per_target'], r['follower_total']) for r in gr if r['follower_total'] is not None)
+            unknown=sum(r['follower_total'] is None for r in gr)
+            if not unknown and known_goal>0:
+                st.progress(min(1.,total_unique/known_goal),text='التقدم بحسب عدد المتابعين المؤكد من المصدر')
             else:
-                with st.spinner('التحقق من الحساب عبر X API...'):
-                    user=lookup_user(target,token)
-                uid=str(user['id'])
-            job_id=create_job(db,'X',target,uid)
-            add_event(db,job_id,'إنشاء',f"تم تحديد الحساب @{target}")
-            st.session_state['selected_job']=job_id
-            st.success(f'تم إنشاء المهمة #{job_id} للحساب @{target}، ويمكن الآن تنفيذ دفعات السحب أدناه.')
-        except (ValueError,XAPIError) as e:st.error(str(e))
-    jobs=[r for r in job_rows(db) if r['platform']=='X' and r['target_uid']]
-    if jobs:
-        choices={r['id']:f"#{r['id']} | @{r['target']} | {r['status']}" for r in jobs}
-        selected=st.selectbox('مهمة موجودة للاستكمال',options=list(choices),format_func=lambda x:choices[x],index=next((i for i,k in enumerate(choices) if k==st.session_state.get('selected_job')),0))
-        job=db.execute('SELECT * FROM jobs WHERE id=?',(selected,)).fetchone()
-        unique=db.execute('SELECT COUNT(*) FROM followers WHERE job_id=?',(selected,)).fetchone()[0]
-        if rapid_key:
-            profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path)
-            if st.button('↻ إعادة قراءة عدد المتابعين من المصدر',key=f'refresh_total_{selected}',help='يُرسل طلبًا إضافيًا وقد يحتسب ضمن باقة RapidAPI'):
-                profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path,retry=True)
-            provider_total=profile_count.get('follower_total')
-            if provider_total is not None:
-                target_limit=max(1,int(provider_total))
-                st.metric('عدد المتابعين وفق بيانات X',f'{target_limit:,}')
-                if unique>target_limit:
-                    st.caption('المستخرج أكبر من العدد المعلن؛ قد تكون بيانات المصدر متأخرة أو تغير عدد المتابعين.')
-            else:
-                st.info('عدد متابعي الحساب غير متاح من RapidAPI؛ يستمر السحب وفق نهاية الصفحات وسقف الحماية، دون إدخال عدد يدوي.')
-        else:
-            st.caption('يحدد السحب التلقائي نهاية القائمة المتاحة من API الرسمي إن أمكن.')
-        a,b,c,d=st.columns(4)
-        a.metric('حسابات فريدة',f'{unique:,}')
-        b.metric('سجلات تمت معالجتها',f"{job['scanned']:,}")
-        c.metric('تكرارات مستبعدة',f"{job['duplicates']:,}")
-        d.metric('وقت API المسجل',f"{job['elapsed_seconds']:.1f} ث")
-        st.progress(min(1.,unique/target_limit),text=(f'التقدم نحو عدد المتابعين المعلن: {target_limit:,}' if rapid_key and provider_total is not None else 'المتابعون المستخرجون — العدد الإجمالي غير متاح'))
-        if job['error']:st.warning('آخر خطأ: '+job['error'])
-        if rapid_key:
-            st.markdown('#### 🌍 إثراء «حول الحساب» التلقائي — مستقل عن السحب')
-            current_policy=about_policy(db,selected)
-            with st.expander('الميزانية وضبط الإثراء',expanded=True):
-                enabled=st.checkbox('استكمال معلومات حول الحساب تلقائيًا عقب سحب المتابعين',value=bool(current_policy['enabled']),key=f'auto_enabled_{selected}')
-                st.caption('حجم الدفعة: 50 حسابًا كحد أقصى عند كل تشغيل. إعادة المحاولة مفعلة للأخطاء المؤقتة فقط، مع انتظار ساعة أو أكثر حسب عدد المحاولات.')
-                cap=st.number_input('السقف الإجمالي لطلبات فحص حول الحساب لهذه المهمة',min_value=1,max_value=200000,value=int(current_policy['max_requests']),step=50,key=f'budget_{selected}')
-                unit_price=st.number_input('سعر الطلب بالدولار (تقدير يدوي من فاتورة RapidAPI، 0 إذا مجهول)',min_value=0.,max_value=100.,value=float(current_policy['unit_price_usd']),step=0.001,format='%.3f',key=f'price_{selected}')
-                usd_cap=st.number_input('حد التكلفة التقديرية بالدولار (0 لتعطيله)',min_value=0.,max_value=1000000.,value=float(current_policy['max_estimated_usd']),step=1.,key=f'usd_cap_{selected}')
-                st.caption('سقف الطلبات حد قطعي داخل مِرصاد. تقدير الدولار لا يساوي فاتورة RapidAPI الفعلية، ولا يشمل سحب المتابعين أو الاستعلام عن الملفات الشخصية.')
-                if st.button('💾 اعتماد ميزانية الإثراء',key=f'budget_save_{selected}'):
-                    save_about_policy(db,selected,enabled,cap,unit_price,usd_cap)
-                    st.success('تم حفظ إعدادات الإثراء والميزانية لهذه المهمة.');st.rerun()
-            progress_info=about_stats(db,selected)
-            m1,m2,m3,m4=st.columns(4)
-            m1.metric('اكتمل فحص About',f"{progress_info['done']:,} / {progress_info['total']:,}")
-            m2.metric('دول متاحة',f"{progress_info['with_country']:,}")
-            m3.metric('محاولات محتسبة',f"{progress_info['used_requests']:,} / {progress_info['max_requests']:,}")
-            m4.metric('تكلفة تقديرية',f"${progress_info['estimated_usd']:.3f}" if progress_info['unit_price_usd'] else 'السعر غير محدد')
-            st.progress(min(1.,progress_info['done']/max(1,progress_info['total'])),text='تقدم إثراء حول الحساب — مستقل عن تقدم سحب المتابعين')
-            st.caption(f"أخطاء تنتظر إعادة المحاولة: {progress_info['retry']} | أخطاء نهائية: {progress_info['exhausted']} | يوزرات ناقصة: {progress_info['missing_username']} | طلبات متبقية: {progress_info['remaining_requests']}")
-            if st.button('🌍 استكمال إثراء 50 حسابًا / إصلاح السجلات القديمة',key=f'auto_run_{selected}',disabled=not bool(rapid_key and progress_info['enabled'] and progress_info['remaining_requests']>0)):
-                try:
-                    reset_interrupted(db,selected)
-                    result=run_auto_about(db,selected,rapid_key,rapid_about_path,50)
-                    st.success('نتيجة الاستكمال: '+str(result))
-                    if result['throttled']:st.warning('تم وقف بقية الطلبات بسبب خطأ أو تقييد من المصدر؛ راجع سجلات المهمة قبل إعادة المحاولة.')
-                    st.rerun()
-                except Exception as ex:st.error('تعذر تشغيل الإثراء: '+str(ex))
-
-        # Automation runs one bounded cycle per Streamlit fragment tick. It is
-        # browser-session driven, not a durable background worker.
-        if rapid_key:
-            st.markdown('#### ⚡ تشغيل متسلسل تلقائي مع خط زمني')
-            st.caption('اضغط تشغيل مرة واحدة؛ ستتتابع صفحات المتابعين ودفعات إثراء About (حتى 50 حسابًا لكل دورة) ما دام المتصفح متصلًا والتطبيق نشطًا. لا يعمل كخدمة خلفية عند إغلاق الصفحة.')
-            auto_key=f'continuous_{selected}'
-            cap_key=f'continuous_page_cap_{selected}'
-            if auto_key not in st.session_state:st.session_state[auto_key]=False
-            auto_goal=int(target_limit)
-            x1,x2,x3=st.columns(3)
-            x1.metric('عدد المتابعين المستهدف تلقائيًا',f'{auto_goal:,}' if provider_total is not None else 'حتى نهاية الصفحات')
-            page_cap=x2.number_input('سقف إجمالي صفحات السحب (حماية من تكاليف المصدر)',min_value=1,max_value=100000,value=250,step=50,key=cap_key)
-            x3.metric('صفحات السحب المستخدمة',f"{job['pages']:,} / {int(page_cap):,}")
-            st.caption('حد طلبات About والتكلفة المحددان في «الميزانية وضبط الإثراء» يظلان مفعلين. سقف الصفحات لا يشمل استعلامات جلب بيانات الملفات الشخصية.')
-            bstart,bstop=st.columns(2)
-            if bstart.button('▶ بدء التشغيل المتسلسل',key=f'continuous_start_{selected}',disabled=not configured or job['pages']>=page_cap):
-                st.session_state[auto_key]=True
-                st.session_state[f'stall_{selected}']=0
-                reset_interrupted(db,selected)
-                add_event(db,selected,'بدء التشغيل الآلي',f'الهدف {auto_goal} | سقف الصفحات {page_cap} | إثراء 50 لكل دورة')
+                st.caption('نسبة الإنجاز الإجمالية لا تُحسب قبل معرفة أعداد جميع الحسابات؛ العدد المسحوب يظهر مباشرة.')
+            dataframe=pd.DataFrame([{'الحساب':'@'+r['target'],'المعرف':r['target_uid'],
+                       'المتابعون':r['unique_count'],'العدد المعلن لدى المصدر':r['follower_total'] if r['follower_total'] is not None else 'غير متاح', 'دولة من About':r['with_country'],
+                       'الصفحات':r['pages'],'حالة المجموعة':r['state'],
+                       'الوقت (ث)':round(r['elapsed_seconds'],1),'ملاحظة':r['message'] or ''} for r in gr])
+            st.dataframe(dataframe,hide_index=True,use_container_width=True)
+            done_about=db.execute('''SELECT COUNT(*) FROM about_attempts a
+                JOIN target_group_members m ON m.job_id=a.job_id
+                WHERE m.group_id=? AND a.state='done' ''',(group_id,)).fetchone()[0]
+            st.progress(min(1.,done_about/max(1,total_unique)),
+                text=f'إثراء About: {done_about:,} / {total_unique:,} متابعًا تم فحصه بنجاح')
+            st.caption('يستمر فحص About تلقائيًا مع اكتشاف المتابعين؛ انتهاء السحب وحده لا يعني اعتماد النتائج.')
+            with st.expander('⚡ ضبط سرعة المجموعة',expanded=False):
+                speed_data=speed_metrics(db,group_id)
+                rate=st.number_input('سقف طلبات RapidAPI في الدقيقة',min_value=1,max_value=120,value=int(speed_data['rpm_limit']),key=f'rpm_{group_id}')
+                size=st.number_input('عدد المتابعين المطلوب في الصفحة',min_value=1,max_value=200,value=100,key=f'size_{group_id}')
+                if st.button('حفظ سرعة المجموعة',key=f'speed_save_{group_id}'):
+                    configure_speed(db,group_id,rpm=rate,page_size=size)
+                    st.success('تم تحديث سرعة المجموعة')
+                st.caption(f"طلبات متاحة في الدقيقة الحالية: {speed_data['remaining_window']} | انتظار: {speed_data['wait_seconds']} ثانية")
+            st.download_button(('⬇️ Excel — نتائج المجموعة النهائية' if group_quality['approved'] else '⬇️ Excel — نتائج المجموعة الأولية'),data=make_group_excel(db,group_id),
+                file_name=f'تحليل_المجموعة_{group_id}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key=f'group_overlap_{group_id}',use_container_width=True)
+    
+            running_key=f'multi_running_{group_id}'
+            col_start,col_stop=st.columns(2)
+            if col_start.button('▶ تشغيل / استئناف جميع الحسابات',key=f'multi_start_{group_id}',
+                      disabled=not bool(rapid_key and rapid_path) or all(r['state']=='مكتمل' for r in gr)):
+                resume_group(db,group_id)
+                st.session_state[running_key]=True
                 st.rerun()
-            if bstop.button('⏸ إيقاف التشغيل التلقائي',key=f'continuous_stop_{selected}'):
-                st.session_state[auto_key]=False
-                add_event(db,selected,'إيقاف يدوي','حُفظ تقدم المهمة ويمكن استكمالها لاحقًا')
+            if col_stop.button('⏸ إيقاف المجموعة وحفظ التقدم',key=f'multi_stop_{group_id}'):
+                st.session_state[running_key]=False
+                set_group_status(db,group_id,'متوقف')
                 st.rerun()
-
-            @st.fragment(run_every='4s')
-            def continuous_panel(job_id,goal,max_pages,active_key):
+            @st.fragment(run_every='2s')
+            def multi_group_panel(gid,session_key):
                 with closing(connect(db_path)) as _fragment_db:
-                    return _continuous_panel_inner(_fragment_db,job_id,goal,max_pages,active_key)
-
-            def _continuous_panel_inner(db,job_id,goal,max_pages,active_key):
-                info=auto_snapshot(db,job_id,goal)
-                a=info['about']
-                z1,z2,z3,z4=st.columns(4)
-                z1.metric('المتابعون الفريدون',f"{info['unique']:,} / {goal:,}")
-                z2.metric('فُحصت معلومات About',f"{a['done']:,} / {info['unique']:,}")
-                z3.metric('زمن المهمة منذ إنشائها',f"{info['elapsed_wall_seconds']/60:.1f} دقيقة")
-                z4.metric('الوقت المتبقي (تقديري)',f"{info['eta_seconds']/60:.1f} دقيقة" if info['eta_seconds'] is not None else 'غير متاح')
-                st.progress(min(1.,info['unique']/goal),text='تقدم سحب المتابعين')
-                st.progress(min(1.,a['done']/max(1,info['unique'])),text='تقدم إثراء About')
-                ev=events_as_dicts(db,job_id)
-                if ev:
-                    frame=pd.DataFrame(ev)
-                    # Separate timeline for observed progress, rather than inventing measurements.
-                    if 'at' in frame and 'unique_count' in frame:
-                        frame['at']=pd.to_datetime(frame['at'],utc=True,errors='coerce')
-                        series=frame.dropna(subset=['at']).groupby('at')['unique_count'].max()
-                        if not series.empty:st.line_chart(series.rename('متابعون فريدون'),height=180)
-                    with st.expander('🕒 الخط الزمني وسجل الدفعات'):
-                        st.dataframe(frame.tail(40).iloc[::-1],hide_index=True,use_container_width=True)
-                if not st.session_state.get(active_key):
-                    st.caption('التشغيل التلقائي متوقف. التقدم محفوظ في قاعدة البيانات الحالية.')
+                    return _multi_group_panel_inner(_fragment_db,gid,session_key)
+    
+            def _multi_group_panel_inner(db,gid,session_key):
+                g=get_group(db,gid)
+                rs=group_members(db,gid)
+                st.caption(f"الحالة: {g['status']} | حسابات قيد المعالجة: {sum(x['state']=='جاهز' for x in rs)} | متوقفة: {sum(x['state'] in ('متوقف','خطأ') for x in rs)}")
+                if not st.session_state.get(session_key,False):
+                    st.info('المجموعة غير نشطة في جلسة المتصفح الحالية. اضغط تشغيل لاستكمالها.')
                     return
-                row=db.execute('SELECT status,pages FROM jobs WHERE id=?',(job_id,)).fetchone()
-                if row['pages']>=max_pages and info['unique']<goal:
-                    st.session_state[active_key]=False
-                    st.warning('توقف التشغيل: تم بلوغ سقف صفحات السحب الذي حددته.')
-                    add_event(db,job_id,'حد الصفحات','توقف لتجنب تجاوز سقف الطلبات')
-                    return
-                with st.spinner('جاري معالجة دفعة تلقائيًا (البيانات تُحفظ بعد كل طلب)...'):
-                    result=auto_step(db,job_id,rapid_key=rapid_key,followers_path=rapid_path,
-                                     about_path=rapid_about_path,goal=goal,
-                                     page_limit=min(int(page_limit),max_pages-int(row['pages'])),
-                                     page_count=int(page_count),about_batch=50,
-                                     do_fetch=True,do_about=True)
-                st.caption(f"الدورة الحالية: {result['fetched_pages']} صفحة متابعة | {result['about_attempted']} فحص About | {result['about_completed']} اكتمل | متابعون جدد: {result.get('new_unique',0)}")
-                # لا نعيد تدوير صفحات لا تقدم معرفات جديدة إلى ما لا نهاية.
-                stall_key=f'stall_{job_id}'
-                if result['fetched_pages']>0 and result.get('new_unique',0)==0:
-                    st.session_state[stall_key]=st.session_state.get(stall_key,0)+1
-                elif result.get('new_unique',0)>0:
-                    st.session_state[stall_key]=0
-                if result['state']=='running' and st.session_state.get(stall_key,0)>=2:
-                    result['state']='paused'
-                    result['message']='توقّف احترازي: دورتان متتاليتان دون أي حساب جديد. افحص Cursor وحدود المزود قبل الاستئناف.'
-                    add_event(db,job_id,'حماية من الدوران','دورتان من الصفحات دون حسابات فريدة جديدة')
-                if result['state']!='running':
-                    st.session_state[active_key]=False
-                    if inspect_job(db,job_id)['approved']:
+                if g['status']!='قيد التشغيل':
+                    st.session_state[session_key]=False
+                    if inspect_group(db,gid)['approved']:
                         st.success('✅ تم الانتهاء من المهمة')
                     else:
-                        st.warning('توقفت المهمة قبل اكتمالها: '+result['message'])
-                    if result['snapshot']['job_status']=='مكتمل' and result['snapshot']['unique'] < goal:
-                        st.warning('أعاد مزود البيانات نهاية الصفحات عند عدد أقل من الهدف. لن يعيد مِرصاد طلب الصفحات نفسها تلقائيًا؛ راجع حدود مزود البيانات وصلاحيات الحساب.')
+                        st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
+                    return
+                if external_worker:
+                    st.info('التشغيل يتم بواسطة عامل المهام الخارجي؛ تُعرض النتائج عند تحديث الصفحة.')
+                    return
+                with st.spinner('جاري السحب والتحقق من About للحساب التالي بالتناوب...'):
+                    answer=group_tick(db,gid,rapid_key=rapid_key,followers_path=rapid_path,about_path=rapid_about_path,profiles_path=rapid_profiles_path)
+                if answer.get('target'):
+                    st.caption(f"آخر حساب: @{answer['target']} | جديد: {answer.get('new_unique',0)} | فحوص About: {answer.get('about_attempted',0)} | الحالة: {answer['state']}")
+                if answer.get('state')=='finished':
+                    st.session_state[session_key]=False
+                    latest=get_group(db,gid)
+                    latest_members=group_members(db,gid)
+                    if inspect_group(db,gid)['approved']:
+                        st.success('✅ تم الانتهاء من المهمة')
+                    else:
+                        st.warning('توقفت بعض المهام؛ راجع حالة كل حساب لاستكمالها.')
                 else:
-                    st.success('حُفظ تقدم هذه الدورة؛ ستبدأ الدورة التالية تلقائيًا ما دامت الصفحة متصلة.')
-            continuous_panel(selected,int(auto_goal),int(page_cap),auto_key)
-
-        disabled=not configured or job['status']=='مكتمل' or bool(st.session_state.get(f'continuous_{selected}',False))
-        if st.button('▶ تنفيذ دفعة جديدة / متابعة',disabled=disabled,type='primary'):
-            progress=st.progress(0)
-            status=st.empty()
-            def notify(page,inserted,duplicates):
-                progress.progress(min(1.,page/page_limit))
-                status.write(f'الصفحة {page} من {page_limit} | جديد {inserted} | تكرار {duplicates}')
+                    st.caption('النتائج والـCursor محفوظة بعد كل دفعة؛ يستمر الحساب التالي في دورة التحديث المقبلة.')
+            multi_group_panel(group_id,running_key)
+    else:
+        st.subheader('سحب حساب واحد')
+        st.caption('أنشئ المهمة باستخدام اليوزر والمعرف الرقمي ثم تابع تقدمها.')
+        user_raw=st.text_input('اليوزر أو رابط حساب X',placeholder='https://x.com/example')
+        with st.expander('إعدادات الدفعة المتقدمة', expanded=False):
+            page_limit=st.slider('أقصى صفحات لكل ضغطة',1,20,3)
+            st.caption('عدد المتابعين يُقرأ تلقائيًا عند توفره؛ هذا الحد يتحكم في عدد صفحات كل دفعة.')
+        # Provider count is resolved after a job exists; safe high cap is a fallback,
+        # not a claim that the account has this many followers.
+        target_limit=1000000
+        if rapid_key and not rapid_path:st.warning('مفتاح RapidAPI محفوظ، لكن يجب إضافة RAPIDAPI_FOLLOWERS_PATH من توثيق المسار الفعلي إلى Secrets.')
+        elif not configured:st.warning('لا يوجد اتصال مكتمل. ضبط مفتاح RapidAPI ومساره، أو X_BEARER_TOKEN، لتفعيل السحب.')
+        if rapid_key:
+            target_uid_input=st.text_input('المعرف الرقمي الدائم للحساب المستهدف (User ID)',placeholder='2455740283')
+            with st.expander('خيارات RapidAPI المتقدمة', expanded=False):
+                page_count=st.number_input('الحجم المطلوب في كل طلب RapidAPI',min_value=1,max_value=200,value=20,step=10)
+        else:
+            target_uid_input=''
+            page_count=20
+        if st.button('إنشاء مهمة سحب جديدة',type='primary',disabled=not bool(configured and (target_uid_input.strip().isdigit() if rapid_key else user_raw.strip()))):
             try:
-                count=(fetch_rapid(db,selected,rapid_key,rapid_path,page_limit,int(target_limit),int(page_count),notify) if rapid_key else fetch_official(db,selected,token,page_limit,int(target_limit),notify))
-                if rapid_key and about_policy(db,selected)['enabled']:
-                    with st.spinner('إثراء تلقائي: فحص حتى 50 حسابًا وفق ميزانية المهمة...'):
-                        about_result=run_auto_about(db,selected,rapid_key,rapid_about_path,50)
-                    st.info(f"إثراء About: {about_result['completed']} مكتمل من {about_result['attempted']} طلب، والأخطاء المؤقتة: {about_result['temporary_errors']}")
-                    if about_result['throttled']:st.warning('أوقفت بقية الاستعلامات حمايةً من الأخطاء المتكررة أو حدود المزود.')
-                st.success(f'اكتملت {count} صفحة. البيانات محفوظة ويمكن عرضها في تبويب التقارير.')
-                st.rerun()
-            except (XAPIError,RapidAPIError) as e:st.error(str(e))
-        if job['status']=='مكتمل':
-            st.success('✅ تم الانتهاء من المهمة', icon=None)
-    else:st.info('أنشئ مهمة جديدة أو استورد CSV لتجربة التقارير دون X API.')
+                target=username_from_input(user_raw) if user_raw.strip() else target_uid_input.strip()
+                if rapid_key:
+                    validate_path(rapid_path)
+                    if not target_uid_input.strip().isdigit():raise ValueError('أدخل User ID الرقمي للحساب المستهدف.')
+                    uid=target_uid_input.strip()
+                else:
+                    with st.spinner('التحقق من الحساب عبر X API...'):
+                        user=lookup_user(target,token)
+                    uid=str(user['id'])
+                job_id=create_job(db,'X',target,uid)
+                add_event(db,job_id,'إنشاء',f"تم تحديد الحساب @{target}")
+                st.session_state['selected_job']=job_id
+                st.success(f'تم إنشاء المهمة #{job_id} للحساب @{target}، ويمكن الآن تنفيذ دفعات السحب أدناه.')
+            except (ValueError,XAPIError) as e:st.error(str(e))
+        jobs=[r for r in job_rows(db) if r['platform']=='X' and r['target_uid']]
+        if jobs:
+            choices={r['id']:f"#{r['id']} | @{r['target']} | {r['status']}" for r in jobs}
+            selected=st.selectbox('مهمة موجودة للاستكمال',options=list(choices),format_func=lambda x:choices[x],index=next((i for i,k in enumerate(choices) if k==st.session_state.get('selected_job')),0))
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(selected,)).fetchone()
+            unique=db.execute('SELECT COUNT(*) FROM followers WHERE job_id=?',(selected,)).fetchone()[0]
+            if rapid_key:
+                profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path)
+                if st.button('↻ إعادة قراءة عدد المتابعين من المصدر',key=f'refresh_total_{selected}',help='يُرسل طلبًا إضافيًا وقد يحتسب ضمن باقة RapidAPI'):
+                    profile_count=_read_single_target_count(db,selected,job['target_uid'],rapid_key,rapid_profiles_path,retry=True)
+                provider_total=profile_count.get('follower_total')
+                if provider_total is not None:
+                    target_limit=max(1,int(provider_total))
+                    st.metric('عدد المتابعين وفق بيانات X',f'{target_limit:,}')
+                    if unique>target_limit:
+                        st.caption('المستخرج أكبر من العدد المعلن؛ قد تكون بيانات المصدر متأخرة أو تغير عدد المتابعين.')
+                else:
+                    st.info('عدد متابعي الحساب غير متاح من RapidAPI؛ يستمر السحب وفق نهاية الصفحات وسقف الحماية، دون إدخال عدد يدوي.')
+            else:
+                st.caption('يحدد السحب التلقائي نهاية القائمة المتاحة من API الرسمي إن أمكن.')
+            a,b,c,d=st.columns(4)
+            a.metric('حسابات فريدة',f'{unique:,}')
+            b.metric('سجلات تمت معالجتها',f"{job['scanned']:,}")
+            c.metric('تكرارات مستبعدة',f"{job['duplicates']:,}")
+            d.metric('وقت API المسجل',f"{job['elapsed_seconds']:.1f} ث")
+            st.progress(min(1.,unique/target_limit),text=(f'التقدم نحو عدد المتابعين المعلن: {target_limit:,}' if rapid_key and provider_total is not None else 'المتابعون المستخرجون — العدد الإجمالي غير متاح'))
+            if job['error']:st.warning('آخر خطأ: '+job['error'])
+            if rapid_key:
+                st.markdown('#### 🌍 إثراء «حول الحساب» التلقائي — مستقل عن السحب')
+                current_policy=about_policy(db,selected)
+                with st.expander('ميزانية فحوص About وإعداداتها',expanded=False):
+                    enabled=st.checkbox('استكمال معلومات حول الحساب تلقائيًا عقب سحب المتابعين',value=bool(current_policy['enabled']),key=f'auto_enabled_{selected}')
+                    st.caption('حجم الدفعة: 50 حسابًا كحد أقصى عند كل تشغيل. إعادة المحاولة مفعلة للأخطاء المؤقتة فقط، مع انتظار ساعة أو أكثر حسب عدد المحاولات.')
+                    cap=st.number_input('السقف الإجمالي لطلبات فحص حول الحساب لهذه المهمة',min_value=1,max_value=200000,value=int(current_policy['max_requests']),step=50,key=f'budget_{selected}')
+                    unit_price=st.number_input('سعر الطلب بالدولار (تقدير يدوي من فاتورة RapidAPI، 0 إذا مجهول)',min_value=0.,max_value=100.,value=float(current_policy['unit_price_usd']),step=0.001,format='%.3f',key=f'price_{selected}')
+                    usd_cap=st.number_input('حد التكلفة التقديرية بالدولار (0 لتعطيله)',min_value=0.,max_value=1000000.,value=float(current_policy['max_estimated_usd']),step=1.,key=f'usd_cap_{selected}')
+                    st.caption('سقف الطلبات حد قطعي داخل مِرصاد. تقدير الدولار لا يساوي فاتورة RapidAPI الفعلية، ولا يشمل سحب المتابعين أو الاستعلام عن الملفات الشخصية.')
+                    if st.button('💾 اعتماد ميزانية الإثراء',key=f'budget_save_{selected}'):
+                        save_about_policy(db,selected,enabled,cap,unit_price,usd_cap)
+                        st.success('تم حفظ إعدادات الإثراء والميزانية لهذه المهمة.');st.rerun()
+                progress_info=about_stats(db,selected)
+                m1,m2,m3,m4=st.columns(4)
+                m1.metric('اكتمل فحص About',f"{progress_info['done']:,} / {progress_info['total']:,}")
+                m2.metric('دول متاحة',f"{progress_info['with_country']:,}")
+                m3.metric('محاولات محتسبة',f"{progress_info['used_requests']:,} / {progress_info['max_requests']:,}")
+                m4.metric('تكلفة تقديرية',f"${progress_info['estimated_usd']:.3f}" if progress_info['unit_price_usd'] else 'السعر غير محدد')
+                st.progress(min(1.,progress_info['done']/max(1,progress_info['total'])),text='تقدم إثراء حول الحساب — مستقل عن تقدم سحب المتابعين')
+                st.caption(f"أخطاء تنتظر إعادة المحاولة: {progress_info['retry']} | أخطاء نهائية: {progress_info['exhausted']} | يوزرات ناقصة: {progress_info['missing_username']} | طلبات متبقية: {progress_info['remaining_requests']}")
+                if st.button('🌍 استكمال إثراء 50 حسابًا / إصلاح السجلات القديمة',key=f'auto_run_{selected}',disabled=not bool(rapid_key and progress_info['enabled'] and progress_info['remaining_requests']>0)):
+                    try:
+                        reset_interrupted(db,selected)
+                        result=run_auto_about(db,selected,rapid_key,rapid_about_path,50)
+                        st.success('نتيجة الاستكمال: '+str(result))
+                        if result['throttled']:st.warning('تم وقف بقية الطلبات بسبب خطأ أو تقييد من المصدر؛ راجع سجلات المهمة قبل إعادة المحاولة.')
+                        st.rerun()
+                    except Exception as ex:st.error('تعذر تشغيل الإثراء: '+str(ex))
+    
+            # Automation runs one bounded cycle per Streamlit fragment tick. It is
+            # browser-session driven, not a durable background worker.
+            if rapid_key:
+                st.markdown('#### ⚡ تشغيل متسلسل تلقائي مع خط زمني')
+                st.caption('تُحفظ النتائج بعد كل دورة؛ التشغيل داخل الصفحة يتطلب بقاء الجلسة نشطة.')
+                auto_key=f'continuous_{selected}'
+                cap_key=f'continuous_page_cap_{selected}'
+                if auto_key not in st.session_state:st.session_state[auto_key]=False
+                auto_goal=int(target_limit)
+                x1,x2,x3=st.columns(3)
+                x1.metric('عدد المتابعين المستهدف تلقائيًا',f'{auto_goal:,}' if provider_total is not None else 'حتى نهاية الصفحات')
+                page_cap=x2.number_input('سقف إجمالي صفحات السحب (حماية من تكاليف المصدر)',min_value=1,max_value=100000,value=250,step=50,key=cap_key)
+                x3.metric('صفحات السحب المستخدمة',f"{job['pages']:,} / {int(page_cap):,}")
+                st.caption('حد طلبات About والتكلفة المحددان في «الميزانية وضبط الإثراء» يظلان مفعلين. سقف الصفحات لا يشمل استعلامات جلب بيانات الملفات الشخصية.')
+                bstart,bstop=st.columns(2)
+                if bstart.button('▶ بدء السحب والإثراء',key=f'continuous_start_{selected}',disabled=not configured or job['pages']>=page_cap):
+                    st.session_state[auto_key]=True
+                    st.session_state[f'stall_{selected}']=0
+                    reset_interrupted(db,selected)
+                    add_event(db,selected,'بدء التشغيل الآلي',f'الهدف {auto_goal} | سقف الصفحات {page_cap} | إثراء 50 لكل دورة')
+                    st.rerun()
+                if bstop.button('⏸ إيقاف وحفظ التقدم',key=f'continuous_stop_{selected}'):
+                    st.session_state[auto_key]=False
+                    add_event(db,selected,'إيقاف يدوي','حُفظ تقدم المهمة ويمكن استكمالها لاحقًا')
+                    st.rerun()
+    
+                @st.fragment(run_every='4s')
+                def continuous_panel(job_id,goal,max_pages,active_key):
+                    with closing(connect(db_path)) as _fragment_db:
+                        return _continuous_panel_inner(_fragment_db,job_id,goal,max_pages,active_key)
+    
+                def _continuous_panel_inner(db,job_id,goal,max_pages,active_key):
+                    info=auto_snapshot(db,job_id,goal)
+                    a=info['about']
+                    z1,z2,z3,z4=st.columns(4)
+                    z1.metric('المتابعون الفريدون',f"{info['unique']:,} / {goal:,}" if provider_total is not None else f"{info['unique']:,}")
+                    z2.metric('فُحصت معلومات About',f"{a['done']:,} / {info['unique']:,}")
+                    z3.metric('زمن المهمة منذ إنشائها',f"{info['elapsed_wall_seconds']/60:.1f} دقيقة")
+                    z4.metric('الوقت المتبقي (تقديري)',f"{info['eta_seconds']/60:.1f} دقيقة" if info['eta_seconds'] is not None else 'غير متاح')
+                    st.progress(min(1.,info['unique']/goal),text='تقدم سحب المتابعين')
+                    st.progress(min(1.,a['done']/max(1,info['unique'])),text='تقدم إثراء About')
+                    ev=events_as_dicts(db,job_id)
+                    if ev:
+                        frame=pd.DataFrame(ev)
+                        # Separate timeline for observed progress, rather than inventing measurements.
+                        if 'at' in frame and 'unique_count' in frame:
+                            frame['at']=pd.to_datetime(frame['at'],utc=True,errors='coerce')
+                            series=frame.dropna(subset=['at']).groupby('at')['unique_count'].max()
+                            if not series.empty:st.line_chart(series.rename('متابعون فريدون'),height=180)
+                        with st.expander('🕒 الخط الزمني وسجل الدفعات'):
+                            st.dataframe(frame.tail(40).iloc[::-1],hide_index=True,use_container_width=True)
+                    if not st.session_state.get(active_key):
+                        st.caption('التشغيل التلقائي متوقف. التقدم محفوظ في قاعدة البيانات الحالية.')
+                        return
+                    row=db.execute('SELECT status,pages FROM jobs WHERE id=?',(job_id,)).fetchone()
+                    if row['pages']>=max_pages and info['unique']<goal:
+                        st.session_state[active_key]=False
+                        st.warning('توقف التشغيل: تم بلوغ سقف صفحات السحب الذي حددته.')
+                        add_event(db,job_id,'حد الصفحات','توقف لتجنب تجاوز سقف الطلبات')
+                        return
+                    with st.spinner('جاري معالجة دفعة تلقائيًا (البيانات تُحفظ بعد كل طلب)...'):
+                        result=auto_step(db,job_id,rapid_key=rapid_key,followers_path=rapid_path,
+                                         about_path=rapid_about_path,goal=goal,
+                                         page_limit=min(int(page_limit),max_pages-int(row['pages'])),
+                                         page_count=int(page_count),about_batch=50,
+                                         do_fetch=True,do_about=True)
+                    st.caption(f"الدورة الحالية: {result['fetched_pages']} صفحة متابعة | {result['about_attempted']} فحص About | {result['about_completed']} اكتمل | متابعون جدد: {result.get('new_unique',0)}")
+                    # لا نعيد تدوير صفحات لا تقدم معرفات جديدة إلى ما لا نهاية.
+                    stall_key=f'stall_{job_id}'
+                    if result['fetched_pages']>0 and result.get('new_unique',0)==0:
+                        st.session_state[stall_key]=st.session_state.get(stall_key,0)+1
+                    elif result.get('new_unique',0)>0:
+                        st.session_state[stall_key]=0
+                    if result['state']=='running' and st.session_state.get(stall_key,0)>=2:
+                        result['state']='paused'
+                        result['message']='توقّف احترازي: دورتان متتاليتان دون أي حساب جديد. افحص Cursor وحدود المزود قبل الاستئناف.'
+                        add_event(db,job_id,'حماية من الدوران','دورتان من الصفحات دون حسابات فريدة جديدة')
+                    if result['state']!='running':
+                        st.session_state[active_key]=False
+                        if inspect_job(db,job_id)['approved']:
+                            st.success('✅ تم الانتهاء من المهمة')
+                        else:
+                            st.warning('توقفت المهمة قبل اكتمالها: '+result['message'])
+                        if result['snapshot']['job_status']=='مكتمل' and result['snapshot']['unique'] < goal:
+                            st.warning('أعاد مزود البيانات نهاية الصفحات عند عدد أقل من الهدف. لن يعيد مِرصاد طلب الصفحات نفسها تلقائيًا؛ راجع حدود مزود البيانات وصلاحيات الحساب.')
+                    else:
+                        st.success('حُفظ تقدم هذه الدورة؛ ستبدأ الدورة التالية تلقائيًا ما دامت الصفحة متصلة.')
+                continuous_panel(selected,int(auto_goal),int(page_cap),auto_key)
+    
+            disabled=not configured or job['status']=='مكتمل' or bool(st.session_state.get(f'continuous_{selected}',False))
+            if st.button('▶ تنفيذ دفعة جديدة / متابعة',disabled=disabled,type='primary'):
+                progress=st.progress(0)
+                status=st.empty()
+                def notify(page,inserted,duplicates):
+                    progress.progress(min(1.,page/page_limit))
+                    status.write(f'الصفحة {page} من {page_limit} | جديد {inserted} | تكرار {duplicates}')
+                try:
+                    count=(fetch_rapid(db,selected,rapid_key,rapid_path,page_limit,int(target_limit),int(page_count),notify) if rapid_key else fetch_official(db,selected,token,page_limit,int(target_limit),notify))
+                    if rapid_key and about_policy(db,selected)['enabled']:
+                        with st.spinner('إثراء تلقائي: فحص حتى 50 حسابًا وفق ميزانية المهمة...'):
+                            about_result=run_auto_about(db,selected,rapid_key,rapid_about_path,50)
+                        st.info(f"إثراء About: {about_result['completed']} مكتمل من {about_result['attempted']} طلب، والأخطاء المؤقتة: {about_result['temporary_errors']}")
+                        if about_result['throttled']:st.warning('أوقفت بقية الاستعلامات حمايةً من الأخطاء المتكررة أو حدود المزود.')
+                    st.success(f'اكتملت {count} صفحة. البيانات محفوظة ويمكن عرضها في تبويب التقارير.')
+                    st.rerun()
+                except (XAPIError,RapidAPIError) as e:st.error(str(e))
+            if job['status']=='مكتمل':
+                st.success('✅ تم الانتهاء من المهمة', icon=None)
+        else:st.info('أنشئ مهمة جديدة أو استورد CSV لتجربة التقارير دون X API.')
 
 if page == '📥 استيراد البيانات':
     st.subheader('استيراد بيانات منصات التواصل')
