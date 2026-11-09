@@ -19,7 +19,7 @@ from x_client import XAPIError,lookup_user,fetch_batch as fetch_official
 from rapid_client import RapidAPIError, fetch_batch as fetch_rapid, validate_path, extract_users, enrich_missing_job, diagnose_lookup, lookup_about, lookup_about_diagnostic, enrich_about_job, lookup_profiles_by_ids
 from auto_enrich import policy as about_policy, set_policy as save_about_policy, stats as about_stats, run_batch as run_auto_about, reset_interrupted, requeue_missing_connection, connection_stats
 from auto_runner import step as auto_step, snapshot as auto_snapshot
-from multi_accounts import (parse_targets, create_group, get_groups, get_group, members as group_members,
+from multi_accounts import (parse_targets, resolve_targets, create_group, get_groups, get_group, members as group_members,
                             resume as resume_group, set_status as set_group_status, tick as group_tick)
 from performance import configure as configure_speed, metrics as speed_metrics
 from readiness import inspect_job, inspect_group
@@ -170,9 +170,9 @@ if page == '🔎 سحب متابعي X':
     with st.expander('➕ إنشاء مجموعة جديدة', expanded=False):
         with st.form('multi_target_create', clear_on_submit=False):
             multi_name=st.text_input('اسم المجموعة', value='مجموعة متابعة X')
-            raw_targets=st.text_area('حساب واحد في كل سطر: اليوزر، المعرّف الرقمي',
-                placeholder='@account_one,123456789\nhttps://x.com/account_two | 987654321',height=145)
-            st.caption('حتى 100 حساب؛ يُقرأ عدد المتابعين آليًا عند تشغيل المجموعة. يتطلب المزود رقم الحساب الدائم.')
+            raw_targets=st.text_area('حساب واحد في كل سطر — اليوزر أو الرابط فقط',
+                placeholder='@account_one\nhttps://x.com/account_two\n@account_three',height=145)
+            st.caption('يقرأ النظام المعرف الدائم وعدد المتابعين تلقائيًا، ثم يتحقق من الحسابات قبل إنشاء المهمة. قد تُحتسب طلبات تحقق مدفوعة.')
             st.markdown('**إعدادات السحب**')
             aa,bb,cc=st.columns(3)
             per_target_goal=1000000
@@ -194,7 +194,11 @@ if page == '🔎 سحب متابعي X':
                 st.error('لم تُنشأ المجموعة؛ صحّح الإدخال:\n'+'\n'.join('• '+err for err in problems[:15]))
             else:
                 try:
-                    gid=create_group(db,multi_name,items,goal=per_target_goal,page_cap=per_target_pages,
+                    verified,lookup_errors=resolve_targets(items,rapid_key,secret('RAPIDAPI_USER_PATH') or '/user')
+                    if lookup_errors:
+                        st.error('تعذر التحقق من جميع الحسابات؛ لم تُنشأ المجموعة: ' + ' | '.join(lookup_errors[:12]))
+                        st.stop()
+                    gid=create_group(db,multi_name,verified,goal=per_target_goal,page_cap=per_target_pages,
                        page_size=multi_page_size,pages_per_tick=pages_tick,about_per_tick=about_tick,
                        about_enabled=about_enabled)
                     st.session_state['selected_group']=gid
@@ -221,12 +225,23 @@ if page == '🔎 سحب متابعي X':
         gm2.metric('المتابعون المسحوبون',f'{total_unique:,}')
         gm3.metric('دولة من About',f'{total_country:,}')
         gm4.metric('المهام المكتملة',f"{sum(r['state']=='مكتمل' for r in gr):,} / {len(gr)}")
-        st.progress(min(1.,total_unique/max(1,len(gr)*group['goal_per_target'])),text='التقدم التجميعي (كل هدف مستقل)')
+        known_goal=sum(min(group['goal_per_target'], r['follower_total']) for r in gr if r['follower_total'] is not None)
+        unknown=sum(r['follower_total'] is None for r in gr)
+        if not unknown and known_goal>0:
+            st.progress(min(1.,total_unique/known_goal),text='التقدم بحسب عدد المتابعين المؤكد من المصدر')
+        else:
+            st.caption('نسبة الإنجاز الإجمالية لا تُحسب قبل معرفة أعداد جميع الحسابات؛ العدد المسحوب يظهر مباشرة.')
         dataframe=pd.DataFrame([{'الحساب':'@'+r['target'],'المعرف':r['target_uid'],
                    'المتابعون':r['unique_count'],'العدد المعلن لدى المصدر':r['follower_total'] if r['follower_total'] is not None else 'غير متاح', 'دولة من About':r['with_country'],
                    'الصفحات':r['pages'],'حالة المجموعة':r['state'],
                    'الوقت (ث)':round(r['elapsed_seconds'],1),'ملاحظة':r['message'] or ''} for r in gr])
         st.dataframe(dataframe,hide_index=True,use_container_width=True)
+        done_about=db.execute('''SELECT COUNT(*) FROM about_attempts a
+            JOIN target_group_members m ON m.job_id=a.job_id
+            WHERE m.group_id=? AND a.state='done' ''',(group_id,)).fetchone()[0]
+        st.progress(min(1.,done_about/max(1,total_unique)),
+            text=f'إثراء About: {done_about:,} / {total_unique:,} متابعًا تم فحصه بنجاح')
+        st.caption('يستمر فحص About تلقائيًا مع اكتشاف المتابعين؛ انتهاء السحب وحده لا يعني اعتماد النتائج.')
         with st.expander('⚡ ضبط سرعة المجموعة',expanded=False):
             speed_data=speed_metrics(db,group_id)
             rate=st.number_input('سقف طلبات RapidAPI في الدقيقة',min_value=1,max_value=120,value=int(speed_data['rpm_limit']),key=f'rpm_{group_id}')
