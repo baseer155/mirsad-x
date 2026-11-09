@@ -25,6 +25,7 @@ from performance import configure as configure_speed, metrics as speed_metrics
 from readiness import inspect_job, inspect_group
 from report_audit import manifest_for_job, manifest_for_group
 from ops_backup import backup_bytes, backup_filename
+from ops_retention import dashboard as retention_dashboard, candidates as retention_candidates, confirm_archived, clean_due
 from ops_health import db_health, security_flags
 from report_fields import safe_report_name, account_links, account_status, connected_via, elapsed_metrics, fmt_duration
 
@@ -805,6 +806,45 @@ if page == '🛡️ الأمان والمراقبة':
             st.session_state.pop('ops_backup_name', None)
             st.rerun()
     st.caption('الاستعادة متاحة عبر restore_backup.py خارج الموقع، بعد إيقاف جميع المهام، إلى مسار جديد فقط؛ لتجنّب استبدال قاعدة نشطة.')
+
+if page == '🛡️ الأمان والمراقبة':
+    st.markdown('### إدارة الاحتفاظ والتنظيف اليومي')
+    st.caption('يُحذف التفصيل فقط بعد اعتماد التقرير، وتأكيد حفظ التقرير والنسخة الاحتياطية خارج الاستضافة، ومرور 24 ساعة. تبقى الإحصاءات التاريخية.')
+    try:
+        retention_data = retention_dashboard(db)
+        c1,c2,c3=st.columns(3)
+        c1.metric('مهام محفوظة في الأرشيف', retention_data['archived_jobs'])
+        c2.metric('إجمالي سجلات المتابعين عبر المهام', f"{retention_data['all_time_follower_records']:,}")
+        c3.metric('مؤهلة للتنظيف', retention_data['pending_archive'])
+        if retention_data['last_run']:
+            r=retention_data['last_run']
+            st.caption(f"آخر تنظيف: {r['checked_at']} | مهام: {r['cleaned']} | سجلات: {r['followers_deleted']}")
+        with st.expander('تأكيد أرشفة مهمة مكتملة', expanded=False):
+            completed=db.execute("SELECT id,target FROM jobs WHERE status='مكتمل' AND id NOT IN (SELECT job_id FROM retention_archive WHERE cleaned_at IS NOT NULL) ORDER BY id DESC").fetchall()
+            if completed:
+                options={f"#{r['id']} — @{r['target']}":int(r['id']) for r in completed}
+                chosen=st.selectbox('المهمة',list(options),key='retention_job')
+                saved_report=st.checkbox('حفظت التقرير النهائي المعتمد خارج الاستضافة',key='retention_report')
+                saved_backup=st.checkbox('حفظت نسخة احتياطية خارج الاستضافة في مكان آمن',key='retention_backup')
+                if st.button('تأكيد الأرشفة وبدء مهلة 24 ساعة',disabled=not(saved_report and saved_backup),key='retention_confirm'):
+                    try:
+                        confirm_archived(db,options[chosen],backup_saved=saved_backup,report_saved=saved_report)
+                        st.success('تم تسجيل الأرشفة. لن تُحذف البيانات قبل مرور 24 ساعة.')
+                    except Exception as ex:
+                        st.warning(str(ex))
+            else: st.caption('لا توجد مهام مكتملة جاهزة للأرشفة.')
+        preview=retention_candidates(db)
+        st.caption(f'معاينة تنظيف اليوم: {len(preview)} مهمة مستوفية لشروط الحذف.')
+        if st.button('فحص التنظيف دون حذف',key='retention_preview'):
+            result=clean_due(db,dry_run=True)
+            st.info(f"مؤهلة: {result['eligible']} مهمة؛ لم يُحذف شيء.")
+        confirm_clean=st.checkbox('أؤكد أن النسخ المحفوظة خارج الاستضافة متاحة وأرغب في حذف التفاصيل المؤهلة فقط',key='retention_delete_confirm')
+        if st.button('تنظيف التفاصيل المؤهلة الآن',disabled=not confirm_clean,key='retention_clean_now'):
+            result=clean_due(db,dry_run=False)
+            st.success(f"تم تنظيف {result['cleaned']} مهمة؛ وحُفظت إحصاءاتها التاريخية. السجلات التفصيلية المحذوفة: {result['followers_deleted']:,}.")
+        st.caption('للتنظيف اليومي دون فتح الموقع، شغّل retention_daily.py --execute على مجدول خادم دائم. Streamlit Cloud وحده لا يضمن موعد تشغيل يومي.')
+    except Exception:
+        st.error('تعذر تحميل معلومات سياسة الاحتفاظ؛ راجع سجلات الخادم.')
 
 if page == '⚙️ دليل المنصات':
     st.subheader('حالة الاتصال بحسب المنصة')
