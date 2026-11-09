@@ -99,34 +99,105 @@ def parse_user(raw):
             'followers_count':followers if followers is not None else metrics.get('followers_count'),
             'following_count':following if following is not None else metrics.get('following_count')}
 
+def _response_shape(payload):
+    """Structural diagnostics only: never log response values or identities."""
+    if not isinstance(payload,dict):return 'غير JSON object'
+    root=','.join(sorted(str(k)[:30] for k in payload)[:12])
+    return 'حقول الاستجابة: '+root
+
+
+def _provider_problem(payload):
+    """Recognize response errors without reprinting possibly sensitive provider text."""
+    if not isinstance(payload,dict):return False
+    if payload.get('success') is False or payload.get('status') in ('error','failed'):
+        return True
+    if isinstance(payload.get('errors'),list) and payload['errors']:
+        return True
+    if payload.get('error') and not any(k in payload for k in ('result','data','users','followers','timeline')):
+        return True
+    return False
+
+
 def extract_users(payload):
-    """Extract profile objects from followers responses and saved JSON test files."""
-    if not isinstance(payload,dict):raise RapidAPIError('الملف ليس JSON object.')
-    result=payload.get('result') or {}
-    timeline=result.get('timeline') or {} if isinstance(result,dict) else {}
-    instructions=timeline.get('instructions') or []
-    bottom=(payload.get('cursor') or {}).get('bottom') if isinstance(payload.get('cursor'),dict) else None
-    users=[]
-    for inst in instructions:
-        for entry in inst.get('entries') or []:
-            content=entry.get('content') or {}
-            if content.get('cursorType')=='Bottom':bottom=bottom or content.get('value')
-            raw=((content.get('itemContent') or {}).get('user_results') or {}).get('result') or {}
-            user=parse_user(raw)
-            if user:users.append(user)
-    if users:return users,(str(bottom) if bottom else None)
-    # Provider alternatives: flat data arrays, user lists, and individual results.
-    for source in (payload, result if isinstance(result,dict) else {},payload.get('data') if isinstance(payload.get('data'),dict) else {}):
-        if not isinstance(source,dict):continue
-        for field in ('users','followers','entries','data'):
-            values=source.get(field)
-            if not isinstance(values,list):continue
-            for raw in values:
-                user=parse_user(raw)
-                if user:users.append(user)
-    if not users and not instructions and 'result' not in payload and not isinstance(payload.get('users'),list):
-        raise RapidAPIError('لا تتطابق استجابة المزود مع الشكل المعتمد.')
-    return users,(str(bottom) if bottom else None)
+    """Read common twitter241 GraphQL / timeline / flat-list envelopes.
+
+    Reject unsupported envelopes instead of incorrectly treating them as an
+    empty last page. Only actual profile objects with numeric IDs are saved.
+    """
+    if not isinstance(payload,dict):raise RapidAPIError('استجابة المتابعين ليست JSON object.')
+    if _provider_problem(payload):
+        raise RapidAPIError('أعاد مزود المتابعين رسالة خطأ داخل JSON؛ تحقق من المسار والحصة وطلبات API.')
+
+    users=[]; by_id={}; bottom=None; saw_timeline=False; saw_collection=False
+    stack=[payload]; seen=set(); visited=0
+    while stack and visited<25000:
+        node=stack.pop(); visited+=1
+        if isinstance(node,list):
+            stack.extend(reversed(node[:5000]))
+            continue
+        if not isinstance(node,dict) or id(node) in seen:continue
+        seen.add(id(node))
+
+        # Capture Bottom cursor from either direct cursor, GraphQL cursor entry,
+        # or a named bottom_cursor. Never read Top cursor as the next page.
+        cursor=node.get('cursor')
+        if isinstance(cursor,dict):
+            val=cursor.get('bottom') or cursor.get('bottom_cursor')
+            if isinstance(val,(str,int)) and str(val):bottom=str(val)
+        for key in ('bottom_cursor','next_cursor','nextCursor'):
+            val=node.get(key)
+            if isinstance(val,(str,int)) and str(val):bottom=str(val)
+        if str(node.get('cursorType','')).lower()=='bottom':
+            val=node.get('value')
+            if isinstance(val,(str,int)) and str(val):bottom=str(val)
+
+        # These are authoritative evidence that a *followers* timeline was
+        # returned, even if it currently contains zero user entries.
+        if isinstance(node.get('instructions'),list) or isinstance(node.get('entries'),list):
+            saw_timeline=True
+        if any(isinstance(node.get(k),list) for k in ('followers','users')):
+            saw_collection=True
+        # Some provider versions return user profiles as the top-level data list.
+        if node is payload and isinstance(node.get('data'),list):
+            saw_collection=True
+            for record in node['data'][:5000]:
+                profile=parse_user(record)
+                if profile:by_id[profile['id']]=profile
+
+        # Parse profile records only when wrapped as users or inside a
+        # followers/list timeline, never from unrelated top-level metadata.
+        for field in ('user_results','user_result'):
+            record=node.get(field)
+            if isinstance(record,dict):
+                profile=parse_user(record)
+                if profile:
+                    old=by_id.get(profile['id'])
+                    if old is None or sum(bool(profile.get(k)) for k in ('name','username'))>sum(bool(old.get(k)) for k in ('name','username')):
+                        by_id[profile['id']]=profile
+        for field in ('followers','users'):
+            rows=node.get(field)
+            if isinstance(rows,list):
+                for record in rows:
+                    profile=parse_user(record)
+                    if profile:by_id[profile['id']]=profile
+        # Timeline user item may be a direct user object rather than user_results.
+        item=node.get('itemContent') or node.get('item')
+        if isinstance(item,dict) and (item.get('itemType') in ('TimelineUser','User') or 'user' in item):
+            profile=parse_user(item.get('user') or item)
+            if profile:by_id[profile['id']]=profile
+
+        # Walk standard wrappers only. Skip arbitrary profile metadata blocks.
+        for key in ('result','data','timeline','timeline_v2','instructions','entries',
+                    'content','items','item','itemContent','moduleItems','user_results',
+                    'user_result','users','followers','cursor','user','globalObjects',
+                    'modules','clientEventInfo'):
+            child=node.get(key)
+            if isinstance(child,(dict,list)):stack.append(child)
+
+    users=list(by_id.values())
+    if not saw_timeline and not saw_collection:
+        raise RapidAPIError('لا تتطابق استجابة مزود المتابعين مع الصيغ المدعومة. '+_response_shape(payload)+'؛ تحقق من RAPIDAPI_FOLLOWERS_PATH وسجل التشخيص.')
+    return users,bottom
 
 def parse_page(payload):
     return extract_users(payload)
@@ -150,6 +221,8 @@ def fetch_batch(db, job_id, key, path, page_limit=3, unique_limit=50000, count=2
             users,nxt=followers_page(row['target_uid'],key,path,current,count)
             if nxt and current and nxt == current:
                 raise RapidAPIError('أعاد المزود نفس مؤشر الصفحة؛ أُوقف السحب منعًا للتكرار وتكلفة إضافية.')
+            if users and not nxt:
+                add_event(db,job_id,'تنبيه مصدر','أعاد المزود حسابات لكن لم يوفر مؤشر الصفحة التالية؛ تحقق من نهاية الصفحات قبل اعتماد اكتمال المهمة.')
             if not users: nxt=None
         except RapidAPIError as exc:
             db.execute('UPDATE jobs SET status=?,error=?,updated_at=? WHERE id=?',('متوقف',str(exc),utcnow(),job_id))
